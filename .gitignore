@@ -7,3 +7,6 @@ wvc.apk
 *.zip
 *.log
 .env
+build/
+dist/
+*.spec

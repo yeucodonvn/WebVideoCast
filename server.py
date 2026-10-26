@@ -140,10 +140,18 @@ def format_resolution_badge(width: int, height: int) -> str:
 # 2. APPLICATION STATE & DUAL-PROTOCOL HUB (NATIVE WVC LONG-POLL + WEBSOCKET)
 # ============================================================================
 
+import sys
+import threading
+import webbrowser
+
 PORT = int(os.environ.get("WVC_PORT", "30001"))
-BASE_DIR = Path(__file__).parent.resolve()
-STATIC_DIR = BASE_DIR / "static"
+IS_FROZEN = getattr(sys, "frozen", False)
+BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)).resolve()
+BASE_DIR = Path(sys.executable).parent.resolve() if IS_FROZEN else Path(__file__).parent.resolve()
+STATIC_DIR = (BUNDLE_DIR / "static") if (BUNDLE_DIR / "static").exists() else (BASE_DIR / "static")
 STATIC_DIR.mkdir(exist_ok=True)
+if str(BUNDLE_DIR) not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = f"{BUNDLE_DIR}{os.pathsep}{os.environ.get('PATH', '')}"
 
 app = FastAPI(title="WebVideoCast PC Studio", version="3.0.0")
 
@@ -2553,6 +2561,23 @@ def _parse_label_resolution(label: str) -> Tuple[int, int]:
     return 0, 0
 
 
+async def _launch_playwright_chromium(p, headless: bool = True, args: Optional[List[str]] = None):
+    """
+    Launches Playwright Chromium if installed; otherwise automatically falls back to system
+    Google Chrome (`channel="chrome"`) or Microsoft Edge (`channel="msedge"`, pre-installed on Windows 10/11)
+    so the standalone `.exe` works 100% out-of-the-box without requiring `playwright install chromium`!
+    """
+    launch_args = args or []
+    for ch in (None, "chrome", "msedge"):
+        try:
+            if ch is None:
+                return await p.chromium.launch(headless=headless, args=launch_args)
+            return await p.chromium.launch(channel=ch, headless=headless, args=launch_args)
+        except Exception:
+            continue
+    return await p.chromium.launch(headless=headless, args=launch_args)
+
+
 async def sniff_with_playwright(
     url: str,
     custom_referer: Optional[str] = None,
@@ -2582,7 +2607,7 @@ async def sniff_with_playwright(
     api_json_blobs: List[Any] = []
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await _launch_playwright_chromium(p, headless=True)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             ignore_https_errors=True,
@@ -2818,7 +2843,8 @@ async def open_interactive_wvc_browser(payload: Dict[str, Any]):
         seen_interactive = set()
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
+                browser = await _launch_playwright_chromium(
+                    p,
                     headless=False,
                     args=[
                         "--disable-blink-features=AutomationControlled",
@@ -4255,7 +4281,10 @@ if __name__ == "__main__":
     print("  WEBVIDEOCAST PC STUDIO v3.0 - DEEP PROBER & NOISE FILTER")
     print("=" * 68)
     print(f"  [PC Dashboard]   : http://localhost:{PORT}")
+    print(f"  [Mobile Remote]  : http://{local_ip}:{PORT}")
     print(f"  [TV Direct Link] : {info['direct_tv_url']}")
     print(f"  [cast2tv.app]    : Mo http://cast2tv.app tren TV -> Nhap ma: {info['code']}")
     print("=" * 68)
+    if IS_FROZEN or os.environ.get("WVC_AUTO_OPEN") == "1":
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{PORT}")).start()
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
