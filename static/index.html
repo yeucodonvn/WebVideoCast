@@ -1,0 +1,1915 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebVideoCast PC Studio v3.0 — Điều Khiển & Bắn Link Lên TV</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --card: rgba(15, 23, 42, 0.85);
+      --border: rgba(148, 163, 184, 0.16);
+      --pink: #ec4899;
+      --purple: #8b5cf6;
+      --blue: #3b82f6;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background:
+        radial-gradient(circle at 12% 15%, rgba(236, 72, 153, 0.14), transparent 40%),
+        radial-gradient(circle at 88% 80%, rgba(59, 130, 246, 0.14), transparent 45%),
+        var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      padding: 28px 20px 120px;
+    }
+    .container {
+      max-width: 1820px;
+      width: 96%;
+      margin: 0 auto;
+    }
+    .top-tabs {
+      display: flex;
+      gap: 14px;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
+    }
+    .tab-btn {
+      flex: 1;
+      min-width: 260px;
+      justify-content: center;
+      padding: 15px 24px;
+      font-size: 1.04rem;
+      font-weight: 800;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      color: #cbd5e1;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn.active-yt {
+      background: linear-gradient(135deg, #ef4444, #ec4899, #8b5cf6);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 10px 28px rgba(239, 68, 68, 0.38);
+    }
+    .tab-btn.active-web {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 10px 28px rgba(59, 130, 246, 0.38);
+    }
+    .grid-yt {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.95fr);
+      gap: 24px;
+      align-items: start;
+    }
+    .grid-yt > div {
+      min-width: 0;
+      max-width: 100%;
+    }
+    @media (max-width: 980px) {
+      .grid-yt { grid-template-columns: minmax(0, 1fr); }
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding: 22px 28px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+    }
+    .brand h1 {
+      font-size: 1.65rem;
+      font-weight: 800;
+      background: linear-gradient(90deg, #f472b6, #60a5fa, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .brand p {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-top: 4px;
+    }
+    .header-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+    }
+    .code-badge {
+      background: rgba(236, 72, 153, 0.14);
+      border: 1px solid rgba(236, 72, 153, 0.45);
+      border-radius: 14px;
+      padding: 10px 18px;
+      text-align: center;
+    }
+    .code-badge small {
+      display: block;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #f9a8d4;
+    }
+    .code-badge strong {
+      font-size: 1.5rem;
+      font-family: Consolas, monospace;
+      color: #fff;
+      letter-spacing: 3px;
+    }
+    .tv-status-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      border-radius: 14px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      font-weight: 600;
+      font-size: 0.92rem;
+      color: #6ee7b7;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+    }
+
+    .grid-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.05fr);
+      gap: 22px;
+      align-items: start;
+    }
+    .grid-main > div {
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+    }
+    @media (max-width: 980px) {
+      .grid-main { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      margin-bottom: 22px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+    }
+    .card-title {
+      font-size: 1.12rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .form-group { margin-bottom: 15px; }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+    }
+    input[type="text"], input[type="url"] {
+      width: 100%;
+      padding: 13px 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(15, 23, 42, 0.9);
+      color: #fff;
+      font-size: 0.96rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus, input[type="url"]:focus {
+      border-color: var(--pink);
+      box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.18);
+    }
+
+    .row-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      margin: 14px 0;
+      font-size: 0.9rem;
+      color: #e2e8f0;
+    }
+    .checkbox-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      margin: 0;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    button, .btn {
+      padding: 12px 20px;
+      border-radius: 12px;
+      border: none;
+      font-weight: 700;
+      font-size: 0.94rem;
+      cursor: pointer;
+      transition: transform 0.12s, opacity 0.2s, box-shadow 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+    }
+    button:active { transform: scale(0.97); }
+    .btn-cast {
+      background: linear-gradient(135deg, #ec4899, #8b5cf6);
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(236, 72, 153, 0.35);
+    }
+    .btn-sniff {
+      background: linear-gradient(135deg, #3b82f6, #06b6d4);
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
+    }
+    .btn-secondary {
+      background: rgba(51, 65, 85, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      color: #e2e8f0;
+    }
+
+    /* STREAM LIST & RICH WVC BADGES */
+    .stream-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 460px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      margin-top: 12px;
+      min-width: 0;
+      max-width: 100%;
+      padding-right: 4px;
+    }
+    .stream-list > *,
+    #episodes-grid > * {
+      flex-shrink: 0 !important;
+    }
+    .stream-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+      gap: 14px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(30, 41, 59, 0.78);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      transition: border-color 0.2s, background 0.2s;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .stream-item.main-movie {
+      border-color: rgba(16, 185, 129, 0.45);
+      background: linear-gradient(90deg, rgba(16, 185, 129, 0.1), rgba(30, 41, 59, 0.75));
+    }
+    .stream-meta {
+      overflow: hidden;
+      flex: 1 1 0%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .stream-meta strong {
+      display: block;
+      font-size: 0.93rem;
+      color: #f8fafc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 5px;
+    }
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 5px;
+    }
+    .stream-meta small {
+      display: block;
+      font-size: 0.76rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+      font-family: Consolas, monospace;
+    }
+    .badge-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 0.73rem;
+      font-weight: 700;
+      background: rgba(59, 130, 246, 0.22);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+    }
+    .badge-main {
+      background: rgba(16, 185, 129, 0.22);
+      color: #6ee7b7;
+      border-color: rgba(16, 185, 129, 0.45);
+    }
+    .badge-dur {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fcd34d;
+      border-color: rgba(245, 158, 11, 0.4);
+    }
+    .badge-res {
+      background: rgba(139, 92, 246, 0.24);
+      color: #ddd6fe;
+      border-color: rgba(139, 92, 246, 0.45);
+    }
+    .badge-sub {
+      background: rgba(236, 72, 153, 0.22);
+      color: #f9a8d4;
+      border-color: rgba(236, 72, 153, 0.45);
+    }
+
+    /* GUIDE STEPS */
+    .step-box {
+      background: rgba(30, 41, 59, 0.55);
+      border-left: 4px solid var(--pink);
+      padding: 13px 16px;
+      border-radius: 10px;
+      margin-bottom: 12px;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: #e2e8f0;
+    }
+    .step-box code {
+      background: rgba(0, 0, 0, 0.45);
+      padding: 2px 7px;
+      border-radius: 6px;
+      color: #f472b6;
+      font-weight: 700;
+    }
+
+    /* STICKY PLAYER BAR */
+    .remote-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(10, 15, 29, 0.95);
+      border-top: 1px solid rgba(148, 163, 184, 0.2);
+      padding: 14px 24px;
+      backdrop-filter: blur(16px);
+      z-index: 100;
+    }
+    .remote-inner {
+      max-width: 1220px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .now-playing {
+      min-width: 220px;
+      max-width: 320px;
+    }
+    .now-playing strong {
+      display: block;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #f472b6;
+    }
+    .now-playing small {
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .timeline-wrap {
+      flex: 1;
+      min-width: 240px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .timeline-wrap input[type="range"] {
+      flex: 1;
+      accent-color: var(--pink);
+      cursor: pointer;
+    }
+    .remote-btns {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .remote-btns button {
+      padding: 9px 14px;
+      font-size: 0.85rem;
+    }
+
+    /* MOBILE & TABLET RESPONSIVE DESIGN (IPHONE / ANDROID REMOTE CONTROL) */
+    @media (max-width: 768px) {
+      body {
+        padding: 12px 8px 185px;
+      }
+      .container {
+        width: 98%;
+      }
+      header {
+        padding: 14px 16px;
+        border-radius: 16px;
+        gap: 12px;
+      }
+      .brand h1 {
+        font-size: 1.25rem;
+      }
+      .brand p {
+        font-size: 0.8rem;
+      }
+      .header-badges {
+        width: 100%;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .code-badge {
+        padding: 8px 12px;
+        flex: 1;
+      }
+      .code-badge strong {
+        font-size: 1.1rem;
+      }
+      .top-tabs {
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .tab-btn {
+        min-width: 100%;
+        padding: 12px 14px;
+        font-size: 0.9rem;
+        border-radius: 12px;
+      }
+      .card {
+        padding: 14px;
+        border-radius: 16px;
+        margin-bottom: 14px;
+      }
+      .card-title {
+        font-size: 0.98rem;
+        flex-wrap: wrap;
+      }
+      .row-2 {
+        grid-template-columns: 1fr;
+      }
+      .stream-item {
+        flex-direction: column;
+        align-items: stretch !important;
+        padding: 12px !important;
+        gap: 10px;
+      }
+      .stream-item .yt-action-col {
+        flex-direction: row !important;
+        width: 100%;
+      }
+      .stream-item .yt-action-col button {
+        flex: 1;
+      }
+      .stream-item img {
+        width: 112px !important;
+        height: 64px !important;
+      }
+      .ep-row-item {
+        flex-direction: column;
+        align-items: stretch !important;
+        gap: 8px !important;
+      }
+      .ep-row-item .ep-btn-group {
+        width: 100%;
+        justify-content: flex-end;
+      }
+      .ep-row-item .ep-btn-group .btn-ep-play {
+        flex: 1;
+        justify-content: center;
+      }
+      .remote-bar {
+        padding: 10px 12px;
+      }
+      .remote-inner {
+        gap: 8px;
+      }
+      .now-playing {
+        min-width: 100%;
+        max-width: 100%;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .timeline-wrap {
+        min-width: 100%;
+      }
+      .remote-btns {
+        width: 100%;
+        justify-content: center;
+        gap: 6px;
+      }
+      .remote-btns button {
+        padding: 8px 10px;
+        font-size: 0.78rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <h1>⚡ WebVideoCast Studio v3.0 (PC & Mobile Sync)</h1>
+        <p>Điều khiển & đồng bộ Danh Sách Phát thời gian thực giữa Máy Tính, Điện Thoại và Smart TV</p>
+      </div>
+      <div class="header-badges">
+        <div class="code-badge">
+          <small>Mã nhập trên cast2tv.app</small>
+          <strong id="cast-code">--</strong>
+        </div>
+        <div class="code-badge" style="border-color: rgba(16,185,129,0.5); background: rgba(16,185,129,0.14);">
+          <small style="color:#6ee7b7;">📱 Mở điều khiển trên Điện Thoại (Cùng Wi-Fi)</small>
+          <strong id="mobile-remote-url" style="font-size:1.05rem; letter-spacing:0.5px; color:#a7f3d0;">http://192.168.1.3:30001</strong>
+        </div>
+        <div class="code-badge" style="border-color: rgba(59,130,246,0.45); background: rgba(59,130,246,0.14);">
+          <small style="color:#93c5fd;">Link mở trực tiếp trên TV</small>
+          <strong id="direct-url" style="font-size:1.0rem; letter-spacing:0.5px;">http://...</strong>
+        </div>
+        <div class="tv-status-pill">
+          <span class="dot"></span>
+          <span id="tv-count">0 TV đang kết nối</span>
+        </div>
+        <a href="/api/export-share-zip" class="btn btn-secondary" style="padding:10px 14px; font-size:0.84rem; color:#fcd34d; border-color:rgba(245,158,11,0.45); background:rgba(245,158,11,0.12);" title="Tải gói .ZIP sạch (không kèm lịch sử cá nhân) để gửi cho bạn bè">
+          📦 Tải Bản Share (.ZIP)
+        </a>
+      </div>
+    </header>
+
+    <!-- TOP NAVIGATION TABS -->
+    <div class="top-tabs">
+      <button id="tab-btn-yt" class="tab-btn active-yt" onclick="switchMainTab('yt')">
+        🔴 TAB 1: TÌM YOUTUBE & NHẠC / PHIM LẶP LẠI
+      </button>
+      <button id="tab-btn-playlist" class="tab-btn" onclick="switchMainTab('playlist')">
+        📋 DANH SÁCH PHÁT ĐỒNG BỘ CHUNG (<span id="tab-ep-count">0</span>)
+      </button>
+      <button id="tab-btn-web" class="tab-btn" onclick="switchMainTab('web')">
+        🎬 TAB 2: BẮN PHIM WEB (.M3U8 / .MP4) & Ổ CỨNG
+      </button>
+    </div>
+
+    <!-- ========================================================================== -->
+    <!-- TAB 1: DEDICATED YOUTUBE STUDIO & MULTI-VIDEO / MUSIC LOOP JUKEBOX         -->
+    <!-- ========================================================================== -->
+    <div id="tab-pane-yt" class="grid-yt">
+      <!-- LEFT COLUMN OF YOUTUBE TAB: SEARCH, DIRECT URL & AUTO-SNIFFED YOUTUBE -->
+      <div>
+        <div class="card" style="border-color: rgba(239, 68, 68, 0.45);">
+          <div class="card-title">
+            <span>🔴 Tìm Kiếm YouTube Hoặc Dán Link Video / Playlist YouTube</span>
+            <button class="btn-secondary" style="padding:7px 12px; font-size:0.8rem; background:linear-gradient(135deg,#10b981,#059669); color:#fff; border:none;" onclick="openYouTubeInWvcBrowser(this)">
+              🌐 Mở YouTube Trong Trình Duyệt WVC (Tự Bắt Khi Click Video)
+            </button>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+            <input
+              type="text"
+              id="yt-query"
+              placeholder="Nhập tên bài hát, nhạc Lofi, bộ phim trên YouTube HOẶC dán link https://www.youtube.com/watch?v=..."
+              style="flex:1; min-width:260px; font-size:1rem; padding:14px 16px;"
+              onkeydown="if(event.key==='Enter') searchYouTube();"
+            />
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn-cast" id="btn-yt-search" style="background:linear-gradient(135deg,#ef4444,#ec4899); flex:1; justify-content:center;" onclick="searchYouTube()">
+              🔎 Tìm Kiếm / Bóc Tách YouTube
+            </button>
+            <button class="btn-cast" id="btn-yt-play-direct" style="background:linear-gradient(135deg,#8b5cf6,#3b82f6); flex:1; justify-content:center;" onclick="playDirectYouTubeInput(this)">
+              ▶️ Phát Ngay Ô Này Lên TV
+            </button>
+            <button class="btn-secondary" style="color:#6ee7b7; border-color:rgba(16,185,129,0.45); flex:1; justify-content:center;" onclick="addCurrentInputUrlToPlaylist(this)">
+              ➕ Thêm Ô Này Vào Danh Sách
+            </button>
+          </div>
+
+          <div id="yt-results-wrap" style="display:block; margin-top:20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+              <label style="color:#fca5a5; font-size:0.95rem; margin:0;" id="yt-results-label">🎬 Kết quả tìm kiếm YouTube (Bấm Tìm Kiếm để hiển thị):</label>
+              <button class="btn-secondary" style="padding:7px 14px; font-size:0.82rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45);" onclick="addAllYtResultsToPlaylist()">
+                📥 Thêm Tất Cả Kết Quả Này Vào Danh Sách Phát
+              </button>
+            </div>
+            <div class="stream-list" id="yt-results-list" style="max-height:75vh;">
+              <div style="color:var(--muted); font-size:0.9rem; text-align:center; padding:26px;">
+                Gõ tên bài hát, danh sách nhạc Lofi, hoặc bộ phim lẻ vào ô trên rồi nhấn <strong>🔎 Tìm Kiếm / Bóc Tách YouTube</strong>!
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN OF YOUTUBE TAB: FULL-HEIGHT PLAYLIST & LOOP JUKEBOX -->
+      <div id="yt-playlist-dock">
+        <div id="episodes-wrap" class="card" style="display:block; border-color:rgba(59,130,246,0.45);">
+          <div class="card-title" style="flex-wrap:wrap; gap:10px;">
+            <span style="color:#93c5fd;" id="episodes-title">📋 Danh sách phát đồng bộ chung (0 mục)</span>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <button class="btn-secondary" style="padding:6px 11px; font-size:0.78rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45);" onclick="syncStateFromServer(this)" title="Đồng bộ tức thì giữa Máy Tính và Điện Thoại">🔄 Đồng Bộ PC ↔ ĐT</button>
+              <button class="btn-cast" style="padding:7px 14px; font-size:0.83rem;" onclick="playEpisodeIndex(0)">▶️ Phát Từ Đầu DS</button>
+              <button class="btn-secondary" style="padding:6px 11px; font-size:0.78rem; color:#fca5a5;" onclick="clearPlaylistQueue()">🧹 Xóa trống DS</button>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:14px; padding:10px 14px; border-radius:12px; background:rgba(15,23,42,0.9); border:1px solid rgba(148,163,184,0.2);">
+            <label style="display:inline-flex; align-items:center; gap:7px; cursor:pointer; color:#6ee7b7; font-size:0.88rem; margin:0;">
+              <input type="checkbox" id="auto-next-cb" checked onchange="toggleAutoNext(this.checked)" />
+              🔄 <strong>Tự động Next khi hết bài/tập</strong>
+            </label>
+            <select id="loop-mode-select" onchange="changeLoopMode(this.value)" style="width:auto; padding:7px 12px; font-size:0.85rem; border-radius:8px; background:#0f172a; color:#f9a8d4; border:1px solid rgba(236,72,153,0.45);">
+              <option value="all">🔁 Lặp lại cả danh sách (Nghe/Xem đi nghe lại)</option>
+              <option value="one">🔂 Lặp lại 1 bài / 1 tập hiện tại</option>
+              <option value="off">➡️ Phát hết danh sách rồi dừng</option>
+            </select>
+          </div>
+
+          <!-- Save / Load Named Playlists Row -->
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.08);">
+            <input type="text" id="save-playlist-name" placeholder="Đặt tên danh sách (VD: Nhạc Lofi Nghe Đi Nghe Lại, Phim Bộ...)" style="flex:1; min-width:190px; padding:9px 12px; font-size:0.85rem;" />
+            <button class="btn-secondary" style="padding:8px 13px; font-size:0.82rem; color:#6ee7b7;" onclick="saveCurrentPlaylist()">💾 Lưu DS</button>
+            <select id="saved-playlists-select" style="width:auto; min-width:170px; padding:8px 11px; font-size:0.84rem; border-radius:8px; background:#0f172a; color:#fff; border:1px solid rgba(148,163,184,0.3);">
+              <option value="">-- 📂 Danh sách đã lưu --</option>
+            </select>
+            <button class="btn-cast" style="padding:8px 13px; font-size:0.82rem;" onclick="loadSelectedPlaylist(true)">▶️ Nạp & Phát</button>
+            <button class="btn-secondary" style="padding:8px 10px; font-size:0.82rem;" onclick="deleteSelectedPlaylist()">🗑️</button>
+          </div>
+
+          <div id="episodes-grid" style="display:flex; flex-direction:column; gap:9px; max-height:70vh; overflow-y:auto; overflow-x:hidden; padding-right:4px;">
+            <div style="color:var(--muted); font-size:0.88rem; padding:22px; text-align:center;">
+              Danh sách phát đang trống. Hãy tìm video YouTube bên trái rồi bấm <strong>➕ Thêm vào DS</strong>!
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DEDICATED FULL-WIDTH PLAYLIST TAB PANE (ESPECIALLY CONVENIENT ON MOBILE) -->
+    <div id="tab-pane-playlist" style="display:none;">
+      <div id="dedicated-playlist-dock"></div>
+    </div>
+
+    <!-- ========================================================================== -->
+    <!-- TAB 2: WEB MOVIE EXTRACTOR, WVC BROWSER & LOCAL FILE CASTER                -->
+    <!-- ========================================================================== -->
+    <div id="tab-pane-web" class="grid-main" style="display:none;">
+      <!-- LEFT COLUMN -->
+      <div>
+        <div class="card">
+          <div class="card-title">
+            <span>🚀 Bắn Link Video & Bóc Tách Độ Phân Giải / Thời Lượng / Phụ Đề</span>
+            <a href="/tv" target="_blank" class="btn btn-secondary" style="padding:7px 13px; font-size:0.8rem;">📺 Mở Màn Hình TV Thử Nghiệm</a>
+          </div>
+
+          <div class="form-group">
+            <label>Dán Link Trang Web Xem Phim (vd: cobephim.icu...), Link .m3u8/.mp4 HOẶC Đường dẫn File ổ cứng:</label>
+            <input type="text" id="media-url" placeholder="https://cobephim.icu/phim/... hoặc https://.../index.m3u8 hoặc I:\tv show\..." />
+          </div>
+
+          <div class="row-2">
+            <div class="form-group">
+              <label>Tiêu đề hiển thị trên TV (Tùy chọn):</label>
+              <input type="text" id="media-title" placeholder="Tự động lấy tên phim..." />
+            </div>
+            <div class="form-group">
+              <label>Link Phụ đề rời .SRT / .VTT (Hoặc bấm chọn từ danh sách phụ đề bắt được):</label>
+              <div style="display:flex; gap:8px;">
+                <input type="text" id="sub-url" placeholder="https://.../vietnamese.vtt hoặc .srt" />
+                <button class="btn-secondary" style="white-space:nowrap; padding:10px 14px;" onclick="beamSubtitleNow()" title="Bắn phụ đề này thẳng lên TV đang phát">💬 Bắn Sub Lên TV</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="row-2">
+            <div class="form-group">
+              <label>Custom Referer Header (Vượt chặn hotlink):</label>
+              <input type="text" id="custom-referer" placeholder="Tự động giả lập theo trang phim nếu để trống" />
+            </div>
+            <div class="form-group">
+              <label>Đầu ra DLNA / UPnP TV (Tùy chọn):</label>
+              <select id="dlna-select" style="width:100%; padding:13px; border-radius:12px; background:rgba(15,23,42,0.9); color:#fff; border:1px solid rgba(148,163,184,0.25);">
+                <option value="">-- Phát qua App Web Video Caster Receiver trên TV --</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="checkbox-row">
+            <label>
+              <input type="checkbox" id="use-proxy" checked />
+              🛡️ <strong>Proxy luồng qua PC</strong> (Bẻ khóa CORS, Referer & gọt vỏ PNG giả dạng .TS)
+            </label>
+            <label>
+              <input type="checkbox" id="deep-browser" checked />
+              🕵️ Dùng Chromium ngầm (Playwright) khi bóc tách web phim phức tạp
+            </label>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn-cast" onclick="castDirect()">▶️ PHÁT LÊN TV NGAY</button>
+            <button class="btn-sniff" id="btn-extract" onclick="extractStreams()">🔍 BÓC TÁCH LINK VIDEO & PHỤ ĐỀ (.SRT/.VTT)</button>
+            <button class="btn-secondary" id="btn-open-browser" style="background:linear-gradient(135deg,#10b981,#059669); color:#fff; border:none;" onclick="openInteractiveBrowser(this)">🌐 Mở Trình Duyệt WVC Nhúng (Chặn Quảng Cáo & Bắt Khi Play)</button>
+            <button class="btn-secondary" onclick="scanDlna()">📡 Quét TV DLNA</button>
+          </div>
+
+          <!-- EXTRACTED VIDEO STREAMS -->
+          <div id="extract-results-wrap" style="display:none; margin-top:22px;">
+            <label style="color:#6ee7b7; font-size:0.92rem;">🎬 Các luồng Video bóc tách được (Đã đo Thời lượng & Độ phân giải chuẩn như App Điện Thoại):</label>
+            <div class="stream-list" id="extract-list"></div>
+          </div>
+
+          <!-- EXTRACTED SUBTITLES -->
+          <div id="extract-subs-wrap" style="display:none; margin-top:18px;">
+            <label style="color:#f9a8d4; font-size:0.92rem;">💬 Phụ đề (.SRT / .VTT) bóc tách được từ trang phim:</label>
+            <div class="stream-list" id="extract-subs-list" style="max-height:220px;"></div>
+          </div>
+        </div>
+
+        <!-- DOCK FOR EPISODES WHEN ON TAB 2 -->
+        <div id="web-playlist-dock"></div>
+
+        <!-- LOCAL PC FILE CASTER -->
+        <div class="card">
+          <div class="card-title">
+            <span>💻 Phát File Video Có Sẵn Trong Ổ Cứng Máy Tính (.MKV / .MP4) Lên TV</span>
+          </div>
+          <div style="display:flex; gap:12px;">
+            <input type="text" id="local-path" placeholder="Ví dụ: I:\tv show\goblin\[K-Zone].Goblin.E02.HD.KITES.VN.mkv" />
+            <button class="btn-cast" style="white-space:nowrap;" onclick="castLocalFile()">🚀 Phát File Lên TV</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN -->
+      <div>
+        <!-- SNIFFED HISTORY FROM EXTENSION / BOOKMARKLET -->
+        <div class="card">
+          <div class="card-title">
+            <span>📡 Luồng Video Bắt Tự Động Từ Tab Trình Duyệt</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <small style="color:#6ee7b7; font-weight:600;">Đã lọc nhiễu & đo thời lượng</small>
+              <button class="btn-secondary" style="padding:5px 10px; font-size:0.75rem;" onclick="clearSniffedHistory()">🗑️ Xóa lịch sử</button>
+            </div>
+          </div>
+          <div class="stream-list" id="sniffed-list">
+            <div style="color:var(--muted); font-size:0.88rem; text-align:center; padding:18px;">
+              Chưa có luồng tự động nào. Khi bạn mở phim trên tab trình duyệt, các luồng <code>.m3u8</code> / <code>.mp4</code> sạch sẽ tự động hiện ở đây kèm Thời lượng & Độ phân giải!
+            </div>
+          </div>
+        </div>
+
+        <!-- SNIFFED SUBTITLES FROM EXTENSION / EXTRACTOR -->
+        <div class="card">
+          <div class="card-title">
+            <span>💬 Phụ Đề Rời (.SRT / .VTT) Bắt Được</span>
+            <small style="color:#f9a8d4; font-weight:600;">Tự động convert WebVTT</small>
+          </div>
+          <div class="stream-list" id="sniffed-subs-list" style="max-height:240px;">
+            <div style="color:var(--muted); font-size:0.86rem; text-align:center; padding:14px;">
+              Chưa có phụ đề rời nào. Khi trang web tải file <code>.srt</code> hoặc <code>.vtt</code>, phụ đề sẽ hiện tại đây để bạn bắn lên TV 1 chạm!
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>📺 Hướng Dẫn Kết Nối TV</span>
+          </div>
+          <div class="step-box">
+            <strong>Cách 1 (App Web Video Caster Receiver trên TV):</strong><br/>
+            Mở app trên Tivi (hoặc <code>http://cast2tv.app</code>) và nhập mã <code id="guide-code">--</code>!
+          </div>
+          <div class="step-box" style="border-left-color: var(--blue);">
+            <strong>Cách 2 (Vào thẳng trình duyệt TV):</strong><br/>
+            Trên trình duyệt Tivi, mở <code id="guide-url">http://...</code>
+          </div>
+          <div class="step-box" style="border-left-color: var(--green);">
+            <strong>Cách 3 (Bookmarklet bắt link):</strong><br/>
+            Kéo nút <a id="bookmarklet-link" href="#" class="btn btn-cast" style="padding:4px 12px; font-size:0.8rem; border-radius:8px;">⚡ Bắn lên TV</a> thả vào <strong>Bookmarks Bar</strong>.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STICKY REMOTE CONTROL BAR -->
+  <div class="remote-bar">
+    <div class="remote-inner">
+      <div class="now-playing">
+        <strong id="np-title">Chưa phát video</strong>
+        <small id="np-time">00:00 / 00:00</small>
+      </div>
+
+      <div class="timeline-wrap">
+        <input type="range" id="seek-slider" min="0" max="100" value="0" onchange="seekTo(this.value)" />
+      </div>
+
+      <div class="remote-btns">
+        <button class="btn-secondary" id="btn-prev-ep" style="display:none;" onclick="playEpisodeDelta(-1)">⏮ Tập trước</button>
+        <button class="btn-secondary" onclick="sendCtrl('seek_rel', -15)">⏪ -15s</button>
+        <button class="btn-cast" onclick="sendCtrl('play')">▶ Play</button>
+        <button class="btn-secondary" onclick="sendCtrl('pause')">⏸ Pause</button>
+        <button class="btn-secondary" onclick="sendCtrl('seek_rel', 15)">+15s ⏩</button>
+        <button class="btn-secondary" id="btn-next-ep" style="display:none; background:linear-gradient(135deg,#3b82f6,#8b5cf6); color:#fff; border:none;" onclick="playEpisodeDelta(1)">⏭ Tập tiếp</button>
+        <button class="btn-secondary" onclick="sendCtrl('stop')">⏹ Dừng</button>
+        <select onchange="sendCtrl('rate', parseFloat(this.value))" style="padding:8px; border-radius:10px; background:#1e293b; color:#fff; border:1px solid #334155;">
+          <option value="1">1.0x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+          <option value="2">2.0x</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentDuration = 0;
+
+    function formatTime(sec) {
+      if (!sec || isNaN(sec)) return '00:00';
+      sec = Math.floor(sec);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      return h > 0
+        ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+        : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+
+    function setupBookmarklet(serverOrigin) {
+      const jsCode = `javascript:(function(){var v=document.querySelector('video');var u=(v&&(v.currentSrc||v.src))||location.href;fetch('${serverOrigin}/api/sniff-report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u,title:document.title,page_url:location.href,referer:location.href,user_agent:navigator.userAgent,auto_cast:u.includes('.m3u8')||u.includes('.mp4')})}).then(function(){alert('Đã gửi sang WebVideoCast PC Studio!');}).catch(function(e){window.open('${serverOrigin}/?auto='+encodeURIComponent(location.href));});})();`;
+      document.getElementById('bookmarklet-link').setAttribute('href', jsCode);
+    }
+
+    function buildStreamBadgesHtml(st) {
+      const badges = [];
+      if (st.is_main_movie) {
+        badges.push(`<span class="badge-tag badge-main">🎬 PHIM CHÍNH</span>`);
+      } else if (st.duration_sec && st.duration_sec > 0 && st.duration_sec < 120) {
+        badges.push(`<span class="badge-tag" style="background:rgba(239,68,68,0.2);color:#fca5a5;border-color:rgba(239,68,68,0.4);">⚠️ Clip ngắn (${st.duration_str})</span>`);
+      }
+      if (st.duration_str) {
+        badges.push(`<span class="badge-tag badge-dur">⏱️ ${st.duration_str}</span>`);
+      }
+      if (st.resolution_str) {
+        badges.push(`<span class="badge-tag badge-res">📐 ${st.resolution_str}</span>`);
+      } else if (st.width && st.height) {
+        badges.push(`<span class="badge-tag badge-res">📐 ${st.width}x${st.height}</span>`);
+      }
+      if (st.bitrate_kbps) {
+        badges.push(`<span class="badge-tag">📶 ${st.bitrate_kbps} kbps</span>`);
+      }
+      if (st.server_name) {
+        badges.push(`<span class="badge-tag">🖥️ ${st.server_name}</span>`);
+      } else if (st.variant_type) {
+        badges.push(`<span class="badge-tag">${st.variant_type}</span>`);
+      } else {
+        badges.push(`<span class="badge-tag">${(st.type || 'HLS').toUpperCase()}</span>`);
+      }
+      if (st.subtitles && st.subtitles.length > 0) {
+        badges.push(`<span class="badge-tag badge-sub">💬 Kèm ${st.subtitles.length} Phụ đề</span>`);
+      }
+      return badges.join('');
+    }
+
+    async function castDirect(overrideItem) {
+      const url = overrideItem ? overrideItem.url : document.getElementById('media-url').value.trim();
+      if (!url) {
+        alert('Vui lòng dán link video (.m3u8, .mp4), link trang web hoặc đường dẫn file!');
+        return;
+      }
+
+      // If user pasted a page URL (like https://cobephim.icu/phim/...) and clicked PHÁT LÊN TV NGAY directly,
+      // auto-extract the main movie stream first and cast it!
+      const low = url.toLowerCase().split('?')[0];
+      const isDirectMedia = low.endsWith('.m3u8') || low.endsWith('.mp4') || low.endsWith('.mkv') || low.endsWith('.webm') || /^[a-z]:[\\/]/i.test(url) || url.includes('/stream/local/');
+      if (!overrideItem && !isDirectMedia) {
+        await extractStreams(true);
+        return;
+      }
+
+      const title = (overrideItem && overrideItem.title) || document.getElementById('media-title').value.trim() || url;
+      const subUrl = document.getElementById('sub-url').value.trim();
+      const referer = (overrideItem && overrideItem.headers && overrideItem.headers.Referer) || document.getElementById('custom-referer').value.trim();
+      const useProxy = document.getElementById('use-proxy').checked;
+      const dlnaLocation = document.getElementById('dlna-select').value;
+
+      const subtitles = (overrideItem && overrideItem.subtitles) ? [...overrideItem.subtitles] : [];
+      if (subUrl && !subtitles.some(s => s.url === subUrl)) {
+        subtitles.unshift({ label: 'Tiếng Việt', url: subUrl, referer });
+      }
+
+      const res = await fetch('/api/cast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url,
+          title,
+          referer,
+          headers: (overrideItem && overrideItem.headers) || {},
+          use_proxy: useProxy,
+          subtitles,
+          duration_sec: (overrideItem && overrideItem.duration_sec) || 0,
+          height: (overrideItem && overrideItem.height) || 0,
+          dlna_location: dlnaLocation || null,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.detail || 'Không thể phát link này!');
+        return;
+      }
+      const data = await res.json();
+      if (data.media) {
+        document.getElementById('np-title').textContent = data.media.title;
+      }
+    }
+
+    async function extractStreams(autoPlayFirst = false) {
+      const url = document.getElementById('media-url').value.trim();
+      if (!url) {
+        alert('Vui lòng dán link trang web hoặc video cần bóc tách!');
+        return;
+      }
+      const btn = document.getElementById('btn-extract');
+      btn.textContent = '⏳ Đang bóc tách & đo thời lượng/độ phân giải...';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url,
+            referer: document.getElementById('custom-referer').value.trim(),
+            deep_browser: document.getElementById('deep-browser').checked,
+          }),
+        });
+        const data = await res.json();
+        const streams = data.streams || [];
+        const subtitles = data.subtitles || [];
+        renderExtractList(streams);
+        renderExtractSubtitles(subtitles);
+        renderEpisodes(data.episodes || [], data.current_episode_index, data.auto_next_enabled);
+        if (subtitles.length > 0 && !document.getElementById('sub-url').value.trim()) {
+          document.getElementById('sub-url').value = subtitles[0].url;
+        }
+        if (autoPlayFirst && streams.length > 0) {
+          await castDirect(streams[0]);
+        }
+      } catch (e) {
+        alert('Lỗi bóc tách: ' + e);
+      } finally {
+        btn.textContent = '🔍 BÓC TÁCH LINK VIDEO & PHỤ ĐỀ (.SRT/.VTT)';
+        btn.disabled = false;
+      }
+    }
+
+    function formatShortUrl(u) {
+      if (!u) return '';
+      const s = String(u);
+      if (s.length <= 78) return s;
+      return s.slice(0, 48) + ' ... ' + s.slice(-24);
+    }
+
+    function renderExtractList(streams) {
+      const wrap = document.getElementById('extract-results-wrap');
+      const list = document.getElementById('extract-list');
+      wrap.style.display = 'block';
+      list.innerHTML = '';
+
+      if (!streams.length) {
+        list.innerHTML = '<div style="color:#f87171; padding:12px;">Không tìm thấy luồng trực tiếp. Hãy thử bật Chromium ngầm hoặc mở trang phim trên tab trình duyệt!</div>';
+        return;
+      }
+
+      streams.forEach((st) => {
+        const div = document.createElement('div');
+        div.className = 'stream-item' + (st.is_main_movie ? ' main-movie' : '');
+        const dispUrl = st.display_url || st.url;
+        div.innerHTML = `
+          <div class="stream-meta">
+            <strong>${st.title || 'Stream'}</strong>
+            <div class="badge-row">${buildStreamBadgesHtml(st)}</div>
+            <small title="${st.url}">${formatShortUrl(dispUrl)}</small>
+          </div>
+          <div style="display:flex; gap:6px; flex-shrink:0;">
+            <button class="btn-secondary btn-add-ds" style="padding:8px 11px; font-size:0.8rem; color:#6ee7b7; border-color:rgba(16,185,129,0.4); white-space:nowrap;">➕ Thêm DS</button>
+            <button class="btn-cast btn-play-tv" style="padding:9px 14px; font-size:0.84rem; white-space:nowrap;">▶️ Phát Lên TV</button>
+          </div>
+        `;
+        div.querySelector('.btn-add-ds').onclick = (e) => addItemsToPlaylist([st], false, e.currentTarget);
+        div.querySelector('.btn-play-tv').onclick = () => castDirect(st);
+        list.appendChild(div);
+      });
+    }
+
+    function renderExtractSubtitles(subs) {
+      const wrap = document.getElementById('extract-subs-wrap');
+      const list = document.getElementById('extract-subs-list');
+      if (!subs || !subs.length) {
+        wrap.style.display = 'none';
+        return;
+      }
+      wrap.style.display = 'block';
+      list.innerHTML = '';
+      subs.forEach((sub) => {
+        list.appendChild(createSubtitleElement(sub));
+      });
+    }
+
+    function createSubtitleElement(sub) {
+      const div = document.createElement('div');
+      div.className = 'stream-item';
+      div.innerHTML = `
+        <div class="stream-meta">
+          <strong><span class="badge-tag badge-sub">SUB</span> ${sub.label || 'Phụ đề (.VTT/.SRT)'}</strong>
+          <small>${sub.url}</small>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-secondary btn-pick" style="padding:7px 11px; font-size:0.78rem;">📌 Chọn</button>
+          <button class="btn-cast btn-beam" style="padding:7px 12px; font-size:0.78rem;">📺 Bắn Lên TV</button>
+        </div>
+      `;
+      div.querySelector('.btn-pick').onclick = () => {
+        document.getElementById('sub-url').value = sub.url;
+      };
+      div.querySelector('.btn-beam').onclick = () => beamSubtitleNow(sub);
+      return div;
+    }
+
+    async function beamSubtitleNow(subObj = null) {
+      const url = subObj ? subObj.url : document.getElementById('sub-url').value.trim();
+      if (!url) {
+        alert('Vui lòng nhập hoặc chọn 1 link phụ đề (.srt / .vtt)!');
+        return;
+      }
+      const referer = (subObj && subObj.referer) || document.getElementById('custom-referer').value.trim();
+      const label = (subObj && subObj.label) || 'Tiếng Việt (.VTT)';
+      const res = await fetch('/api/subtitles/cast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, referer, label }),
+      });
+      if (res.ok) {
+        document.getElementById('sub-url').value = url;
+      }
+    }
+
+    function switchMainTab(tabName) {
+      const paneYt = document.getElementById('tab-pane-yt');
+      const paneWeb = document.getElementById('tab-pane-web');
+      const panePl = document.getElementById('tab-pane-playlist');
+      const btnYt = document.getElementById('tab-btn-yt');
+      const btnWeb = document.getElementById('tab-btn-web');
+      const btnPl = document.getElementById('tab-btn-playlist');
+      const epWrap = document.getElementById('episodes-wrap');
+      const ytDock = document.getElementById('yt-playlist-dock');
+      const webDock = document.getElementById('web-playlist-dock');
+      const plDock = document.getElementById('dedicated-playlist-dock');
+
+      if (tabName === 'yt') {
+        paneYt.style.display = 'grid';
+        paneWeb.style.display = 'none';
+        if (panePl) panePl.style.display = 'none';
+        btnYt.className = 'tab-btn active-yt';
+        btnWeb.className = 'tab-btn';
+        if (btnPl) btnPl.className = 'tab-btn';
+        if (epWrap && ytDock && epWrap.parentElement !== ytDock) {
+          ytDock.appendChild(epWrap);
+        }
+      } else if (tabName === 'playlist') {
+        paneYt.style.display = 'none';
+        paneWeb.style.display = 'none';
+        if (panePl) panePl.style.display = 'block';
+        btnYt.className = 'tab-btn';
+        btnWeb.className = 'tab-btn';
+        if (btnPl) btnPl.className = 'tab-btn active-web';
+        if (epWrap && plDock && epWrap.parentElement !== plDock) {
+          plDock.appendChild(epWrap);
+        }
+      } else {
+        paneYt.style.display = 'none';
+        paneWeb.style.display = 'grid';
+        if (panePl) panePl.style.display = 'none';
+        btnYt.className = 'tab-btn';
+        btnWeb.className = 'tab-btn active-web';
+        if (btnPl) btnPl.className = 'tab-btn';
+        if (epWrap && webDock && epWrap.parentElement !== webDock) {
+          webDock.appendChild(epWrap);
+        }
+      }
+    }
+
+    async function openYouTubeInWvcBrowser(btnEl = null) {
+      const orig = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.textContent = '⏳ Đang mở YouTube trên Trình Duyệt WVC...';
+        btnEl.disabled = true;
+      }
+      const q = document.getElementById('yt-query').value.trim();
+      const targetUrl = (q.startsWith('http://') || q.startsWith('https://'))
+        ? q
+        : (q ? `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` : 'https://www.youtube.com');
+      try {
+        await fetch('/api/browser/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: targetUrl }),
+        });
+      } finally {
+        if (btnEl) {
+          setTimeout(() => {
+            btnEl.textContent = orig;
+            btnEl.disabled = false;
+          }, 1800);
+        }
+      }
+    }
+
+    async function playDirectYouTubeInput(btnEl = null) {
+      const q = document.getElementById('yt-query').value.trim();
+      if (!q) {
+        alert('Hãy dán link YouTube hoặc nhập tên bài hát/bộ phim vào ô trên trước!');
+        return;
+      }
+      const orig = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.textContent = '⏳ Đang bóc tách & bắn lên TV...';
+        btnEl.disabled = true;
+      }
+      try {
+        if (q.startsWith('http://') || q.startsWith('https://')) {
+          await addItemsToPlaylist([{ title: q, url: q }], true);
+        } else {
+          const res = await fetch('/api/youtube/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, max_results: 10 }),
+          });
+          const data = await res.json();
+          if (res.ok && data.results && data.results.length > 0) {
+            lastYtResults = data.results;
+            renderYtResults(lastYtResults, q);
+            await addItemsToPlaylist([data.results[0]], true);
+          } else {
+            alert('Không tìm thấy video YouTube phù hợp!');
+          }
+        }
+      } finally {
+        if (btnEl) {
+          btnEl.textContent = orig;
+          btnEl.disabled = false;
+        }
+      }
+    }
+
+    async function openInteractiveBrowser(btnEl = null) {
+      const btn = btnEl || document.getElementById('btn-open-browser');
+      const origText = btn ? btn.textContent : '';
+      if (btn) {
+        btn.textContent = '⏳ Đang bật cửa sổ Trình Duyệt WVC...';
+        btn.disabled = true;
+      }
+      const url = document.getElementById('media-url').value.trim() || 'https://google.com';
+      try {
+        await fetch('/api/browser/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+      } finally {
+        if (btn) {
+          setTimeout(() => {
+            btn.textContent = origText;
+            btn.disabled = false;
+          }, 1800);
+        }
+      }
+    }
+
+    let lastYtResults = [];
+
+    function renderSavedPlaylistsDropdown(savedNames = []) {
+      const sel = document.getElementById('saved-playlists-select');
+      if (!sel) return;
+      const curVal = sel.value;
+      sel.innerHTML = '<option value="">-- 📂 Danh sách đã lưu (' + savedNames.length + ') --</option>';
+      savedNames.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = `🎵 ${name}`;
+        if (name === curVal) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+
+    function renderEpisodes(episodes, currentIdx = -1, autoNextEnabled = true, loopMode = null, savedPlaylists = null) {
+      const wrap = document.getElementById('episodes-wrap');
+      const grid = document.getElementById('episodes-grid');
+      const titleEl = document.getElementById('episodes-title');
+      const tabEpCount = document.getElementById('tab-ep-count');
+      const prevBtn = document.getElementById('btn-prev-ep');
+      const nextBtn = document.getElementById('btn-next-ep');
+      const cb = document.getElementById('auto-next-cb');
+      const loopSel = document.getElementById('loop-mode-select');
+      if (cb && typeof autoNextEnabled === 'boolean') cb.checked = autoNextEnabled;
+      if (loopSel && loopMode) loopSel.value = loopMode;
+      if (Array.isArray(savedPlaylists)) renderSavedPlaylistsDropdown(savedPlaylists);
+      if (tabEpCount) tabEpCount.textContent = episodes ? episodes.length : 0;
+
+      wrap.style.display = 'block';
+      if (!episodes || !episodes.length) {
+        titleEl.textContent = `📋 Danh sách phát đồng bộ chung (0 mục):`;
+        grid.innerHTML = '<div style="color:var(--muted); font-size:0.85rem; padding:10px; text-align:center;">Danh sách phát đang trống. Hãy tìm video YouTube ở trên rồi bấm <strong>➕ Thêm vào DS</strong> (hoặc thêm từ cột Đã Quét bên phải)!</div>';
+        if (prevBtn) prevBtn.style.display = 'none';
+        if (nextBtn) nextBtn.style.display = 'none';
+        return;
+      }
+
+      const activeIdx = (currentIdx >= 0 && currentIdx < episodes.length) ? currentIdx : 0;
+      const curName = episodes[activeIdx]?.name || episodes[0].name;
+      titleEl.textContent = `📋 Danh sách phát đồng bộ chung (${episodes.length} mục — Đang chọn #${activeIdx + 1}: ${curName}):`;
+      grid.innerHTML = '';
+
+      const isLoopAll = (loopSel ? loopSel.value === 'all' : true);
+      if (prevBtn) prevBtn.style.display = (currentIdx > 0 || (isLoopAll && episodes.length > 1)) ? 'inline-flex' : 'none';
+      if (nextBtn) nextBtn.style.display = ((currentIdx >= 0 && currentIdx < episodes.length - 1) || (isLoopAll && episodes.length > 1)) ? 'inline-flex' : 'none';
+
+      episodes.forEach((ep, idx) => {
+        const isCurrent = (idx === currentIdx) || Boolean(ep.active && currentIdx < 0);
+        const row = document.createElement('div');
+        row.className = 'ep-row-item';
+        row.style.display = 'flex';
+        row.style.justifyContent = 'space-between';
+        row.style.alignItems = 'center';
+        row.style.flexShrink = '0';
+        row.style.gap = '12px';
+        row.style.padding = '10px 14px';
+        row.style.borderRadius = '12px';
+        row.style.background = isCurrent ? 'linear-gradient(90deg, rgba(236,72,153,0.22), rgba(139,92,246,0.22))' : 'rgba(30,41,59,0.78)';
+        row.style.border = isCurrent ? '1px solid rgba(236,72,153,0.65)' : '1px solid rgba(148,163,184,0.2)';
+        row.style.minWidth = '0';
+
+        const thumbHtml = ep.thumbnail
+          ? `<img src="${ep.thumbnail}" style="width:72px; height:42px; object-fit:cover; border-radius:8px; flex-shrink:0;" />`
+          : '';
+        const durBadge = ep.duration_str ? `<span class="badge-tag badge-dur">⏱️ ${ep.duration_str}</span>` : '';
+        const chanBadge = ep.channel ? `<span class="badge-tag">📺 ${ep.channel}</span>` : '';
+        const statusBadge = isCurrent ? `<span class="badge-tag badge-main">🔊 ĐANG CHỌN</span>` : `<span class="badge-tag">#${idx + 1}</span>`;
+
+        row.innerHTML = `
+          <div style="display:flex; align-items:center; gap:12px; min-width:0; flex:1;">
+            ${thumbHtml}
+            <div style="min-width:0; flex:1; overflow:hidden;">
+              <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px; min-width:0;">
+                ${statusBadge}
+                <strong style="font-size:0.92rem; color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${ep.name}">${ep.name}</strong>
+              </div>
+              <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                ${durBadge}
+                ${chanBadge}
+                <small style="font-size:0.74rem; color:var(--muted); font-family:Consolas,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:340px;" title="${ep.url}">${formatShortUrl(ep.url)}</small>
+              </div>
+            </div>
+          </div>
+          <div class="ep-btn-group" style="display:flex; align-items:center; gap:5px; flex-shrink:0;">
+            <button class="btn-cast btn-ep-play" style="padding:7px 12px; font-size:0.8rem;">▶️ Phát</button>
+            <button class="btn-secondary btn-ep-up" style="padding:6px 9px; font-size:0.76rem;" title="Đẩy lên">⬆️</button>
+            <button class="btn-secondary btn-ep-down" style="padding:6px 9px; font-size:0.76rem;" title="Đẩy xuống">⬇️</button>
+            <button class="btn-secondary btn-ep-del" style="padding:6px 9px; font-size:0.76rem; color:#fca5a5;" title="Xóa khỏi danh sách">✕</button>
+          </div>
+        `;
+
+        const playBtn = row.querySelector('.btn-ep-play');
+        playBtn.onclick = () => playEpisodeIndex(idx, playBtn);
+        row.querySelector('.btn-ep-up').onclick = () => movePlaylistItem(idx, -1);
+        row.querySelector('.btn-ep-down').onclick = () => movePlaylistItem(idx, 1);
+        row.querySelector('.btn-ep-del').onclick = () => removePlaylistItem(idx);
+
+        grid.appendChild(row);
+      });
+    }
+
+    async function searchYouTube() {
+      const q = document.getElementById('yt-query').value.trim();
+      if (!q) {
+        alert('Vui lòng nhập từ khóa bài hát, bộ phim trên YouTube hoặc dán link YouTube!');
+        return;
+      }
+      const btn = document.getElementById('btn-yt-search');
+      btn.textContent = '⏳ Đang tìm YouTube...';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/youtube/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, max_results: 15 }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.detail || 'Lỗi tìm kiếm YouTube!');
+          return;
+        }
+        lastYtResults = data.results || [];
+        renderYtResults(lastYtResults, q);
+      } catch (e) {
+        alert('Lỗi tìm kiếm YouTube: ' + e);
+      } finally {
+        btn.textContent = '🔎 Tìm Kiếm / Bóc Tách YouTube';
+        btn.disabled = false;
+      }
+    }
+
+    function renderYtResults(items, queryStr = '') {
+      const wrap = document.getElementById('yt-results-wrap');
+      const list = document.getElementById('yt-results-list');
+      const lbl = document.getElementById('yt-results-label');
+      wrap.style.display = 'block';
+      lbl.textContent = `🎬 Tìm thấy ${items.length} video YouTube cho "${queryStr}":`;
+      list.innerHTML = '';
+
+      if (!items.length) {
+        list.innerHTML = '<div style="color:#f87171; padding:12px;">Không tìm thấy video phù hợp!</div>';
+        return;
+      }
+
+      items.forEach((it) => {
+        const div = document.createElement('div');
+        div.className = 'stream-item';
+        div.style.flexShrink = '0';
+        div.style.padding = '14px 18px';
+        div.style.alignItems = 'center';
+        const thumbHtml = it.thumbnail
+          ? `<img src="${it.thumbnail}" style="width:160px; height:90px; object-fit:cover; border-radius:10px; flex-shrink:0; border:1px solid rgba(255,255,255,0.12);" />`
+          : '';
+        div.innerHTML = `
+          <div style="display:flex; gap:16px; align-items:center; min-width:0; flex:1;">
+            ${thumbHtml}
+            <div class="stream-meta" style="min-width:0;">
+              <strong style="display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; white-space:normal; font-size:1.02rem; line-height:1.42; margin-bottom:8px; color:#f8fafc;" title="${it.title}">${it.title}</strong>
+              <div class="badge-row" style="margin-bottom:6px;">
+                <span class="badge-tag badge-dur" style="font-size:0.8rem; padding:3px 10px;">⏱️ ${it.duration_str || 'Video'}</span>
+                <span class="badge-tag" style="font-size:0.8rem; padding:3px 10px;">📺 ${it.channel || 'YouTube'}</span>
+              </div>
+              <small style="font-size:0.78rem;" title="${it.url}">${formatShortUrl(it.url)}</small>
+            </div>
+          </div>
+          <div class="yt-action-col" style="display:flex; flex-direction:column; gap:8px; flex-shrink:0;">
+            <button class="btn-cast btn-play-now" style="padding:10px 16px; font-size:0.88rem; justify-content:center; white-space:nowrap;">▶️ Phát Lên TV</button>
+            <button class="btn-secondary btn-add-q" style="padding:9px 16px; font-size:0.84rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45); justify-content:center; white-space:nowrap;">➕ Thêm vào DS</button>
+          </div>
+        `;
+        div.querySelector('.btn-add-q').onclick = (e) => addItemsToPlaylist([it], false, e.currentTarget);
+        div.querySelector('.btn-play-now').onclick = (e) => addItemsToPlaylist([it], true, e.currentTarget);
+        list.appendChild(div);
+      });
+    }
+
+    async function addItemsToPlaylist(items, playNow = false, btnEl = null) {
+      const orig = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.textContent = playNow ? '⏳ Đang nạp & phát...' : '✅ Đã thêm vào DS!';
+        btnEl.disabled = true;
+      }
+      try {
+        const res = await fetch('/api/playlist/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: items.map(x => ({
+              name: x.title || x.name || x.url,
+              url: x.page_url || x.url,
+              duration_str: x.duration_str || '',
+              channel: x.channel || '',
+              thumbnail: x.thumbnail || '',
+            })),
+            play_now: playNow,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.detail || 'Không thể thêm vào danh sách phát!');
+          return;
+        }
+        if (data.episodes) {
+          renderEpisodes(data.episodes, data.current_episode_index, undefined, data.loop_mode);
+        }
+      } catch (e) {
+        alert('Lỗi thêm vào danh sách: ' + e);
+      } finally {
+        if (btnEl) {
+          setTimeout(() => {
+            btnEl.textContent = orig;
+            btnEl.disabled = false;
+          }, 900);
+        }
+      }
+    }
+
+    async function addAllYtResultsToPlaylist() {
+      if (!lastYtResults.length) return;
+      await addItemsToPlaylist(lastYtResults, false);
+    }
+
+    async function addCurrentInputUrlToPlaylist() {
+      const url = document.getElementById('media-url').value.trim() || document.getElementById('yt-query').value.trim();
+      if (!url) {
+        alert('Hãy dán link video hoặc trang phim vào ô URL (hoặc ô YouTube) trước!');
+        return;
+      }
+      const title = document.getElementById('media-title').value.trim() || url;
+      await addItemsToPlaylist([{ title, url }], false);
+    }
+
+    async function removePlaylistItem(idx) {
+      const res = await fetch('/api/playlist/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ index: idx }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        renderEpisodes(data.episodes || [], data.current_episode_index);
+      }
+    }
+
+    async function movePlaylistItem(idx, delta) {
+      const res = await fetch('/api/playlist/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ index: idx, delta }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        renderEpisodes(data.episodes || [], data.current_episode_index);
+      }
+    }
+
+    async function clearPlaylistQueue() {
+      const res = await fetch('/api/playlist/clear', { method: 'POST' });
+      if (res.ok) {
+        renderEpisodes([], -1);
+      }
+    }
+
+    async function changeLoopMode(mode) {
+      await fetch('/api/playlist/loop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loop_mode: mode }),
+      });
+    }
+
+    async function saveCurrentPlaylist() {
+      const nameInput = document.getElementById('save-playlist-name');
+      const name = (nameInput.value || '').trim();
+      if (!name) {
+        alert('Vui lòng nhập tên danh sách phát (ví dụ: Nhạc Lofi Chill, Phim Kiếm Hiệp...) để lưu!');
+        return;
+      }
+      const res = await fetch('/api/playlist/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || 'Không thể lưu danh sách!');
+        return;
+      }
+      nameInput.value = '';
+      if (data.saved_playlists) renderSavedPlaylistsDropdown(data.saved_playlists);
+    }
+
+    async function loadSelectedPlaylist(playNow = true) {
+      const name = document.getElementById('saved-playlists-select').value;
+      if (!name) {
+        alert('Hãy chọn 1 danh sách đã lưu ở ô bên cạnh trước!');
+        return;
+      }
+      const res = await fetch('/api/playlist/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, play_now: playNow }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.episodes) renderEpisodes(data.episodes, 0);
+      }
+    }
+
+    async function deleteSelectedPlaylist() {
+      const name = document.getElementById('saved-playlists-select').value;
+      if (!name) return;
+      const res = await fetch('/api/playlist/delete-saved', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.saved_playlists) renderSavedPlaylistsDropdown(data.saved_playlists);
+      }
+    }
+
+    async function playEpisodeIndex(idx, btnEl = null) {
+      const origText = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.textContent = '⏳ Đang nạp...';
+        btnEl.disabled = true;
+      }
+      try {
+        const res = await fetch('/api/episodes/play', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ index: idx }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.detail || 'Không thể phát tập này!');
+        }
+      } catch (e) {
+        alert('Lỗi chuyển tập: ' + e);
+      } finally {
+        if (btnEl) {
+          btnEl.textContent = origText;
+          btnEl.disabled = false;
+        }
+      }
+    }
+
+    async function playEpisodeDelta(delta) {
+      try {
+        const res = await fetch('/api/episodes/play', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ delta }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.detail || 'Không thể chuyển tập!');
+        }
+      } catch (e) {
+        alert('Lỗi chuyển tập: ' + e);
+      }
+    }
+
+    async function toggleAutoNext(enabled) {
+      await fetch('/api/episodes/auto-next', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+    }
+
+    async function castLocalFile() {
+      const path = document.getElementById('local-path').value.trim();
+      if (!path) {
+        alert('Hãy nhập đường dẫn file video trên máy tính!');
+        return;
+      }
+      const res = await fetch('/api/register-local-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.detail || 'Không tìm thấy file!');
+        return;
+      }
+      const info = await res.json();
+      await castDirect({
+        url: info.stream_url,
+        title: info.name,
+        headers: {},
+      });
+    }
+
+    async function scanDlna() {
+      const select = document.getElementById('dlna-select');
+      select.innerHTML = '<option value="">⏳ Đang quét TV DLNA trong mạng LAN...</option>';
+      const res = await fetch('/api/dlna/scan');
+      const data = await res.json();
+      select.innerHTML = '<option value="">-- Phát qua App Web Video Caster Receiver trên TV --</option>';
+      (data.devices || []).forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.control_url;
+        opt.textContent = `📺 ${d.name} (${d.ip})`;
+        select.appendChild(opt);
+      });
+    }
+
+    async function sendCtrl(command, value = null) {
+      await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command, value }),
+      });
+    }
+
+    function seekTo(pct) {
+      if (currentDuration > 0) {
+        const target = (pct / 100) * currentDuration;
+        sendCtrl('seek', target);
+      }
+    }
+
+    async function clearSniffedHistory() {
+      await fetch('/api/sniff-clear', { method: 'POST' });
+      document.getElementById('sniffed-list').innerHTML = `
+        <div style="color:var(--muted); font-size:0.88rem; text-align:center; padding:18px;">
+          Đã xóa sạch lịch sử. Mở tab phim để bắt luồng mới!
+        </div>
+      `;
+    }
+
+    function prependSniffedItem(st) {
+      if (!st || !st.url) return;
+      const low = st.url.toLowerCase();
+      if (low.includes('ping.gif') || low.includes('.webmanifest') || low.includes('googlevideo.com/videoplayback')) return;
+
+      const dispUrl = st.display_url || st.page_url || st.url;
+      const dispLow = (dispUrl || '').toLowerCase();
+      const isYt = dispLow.includes('youtube.com/') || dispLow.includes('youtu.be/') || (st.server_name || '').toLowerCase().includes('youtube');
+
+      // Also surface sniffed YouTube videos directly inside Tab 1 (#yt-results-list)
+      if (isYt) {
+        const ytWrap = document.getElementById('yt-results-wrap');
+        const ytList = document.getElementById('yt-results-list');
+        const ytLbl = document.getElementById('yt-results-label');
+        if (ytWrap && ytList) {
+          ytWrap.style.display = 'block';
+          if (!ytList.children.length) {
+            ytLbl.textContent = '🔴 Video YouTube vừa bắt tự động từ Trình Duyệt WVC / Chrome:';
+          }
+          const existingYt = Array.from(ytList.querySelectorAll('.stream-item')).find(el => el.dataset.url === dispUrl);
+          if (existingYt) existingYt.remove();
+
+          const ytDiv = document.createElement('div');
+          ytDiv.className = 'stream-item main-movie';
+          ytDiv.dataset.url = dispUrl;
+          ytDiv.style.padding = '12px 14px';
+          const ytItem = {
+            title: st.title || 'YouTube Video',
+            url: dispUrl,
+            page_url: dispUrl,
+            duration_str: st.duration_str || 'YouTube',
+            channel: st.server_name || 'YouTube',
+            thumbnail: st.thumbnail || '',
+          };
+          ytDiv.innerHTML = `
+            <div style="display:flex; gap:14px; align-items:center; min-width:0; flex:1;">
+              <div class="stream-meta" style="min-width:0;">
+                <strong style="display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; white-space:normal; font-size:0.96rem; line-height:1.35; margin-bottom:6px;" title="${ytItem.title}">${ytItem.title}</strong>
+                <div class="badge-row">
+                  <span class="badge-tag badge-main">🔴 BẮT TỪ TRÌNH DUYỆT</span>
+                  ${buildStreamBadgesHtml(st)}
+                </div>
+                <small title="${dispUrl}">${formatShortUrl(dispUrl)}</small>
+              </div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px; flex-shrink:0;">
+              <button class="btn-cast btn-play-now" style="padding:8px 14px; font-size:0.83rem; justify-content:center;">▶️ Phát Lên TV</button>
+              <button class="btn-secondary btn-add-q" style="padding:7px 14px; font-size:0.8rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45); justify-content:center;">➕ Thêm vào DS</button>
+            </div>
+          `;
+          ytDiv.querySelector('.btn-add-q').onclick = (e) => addItemsToPlaylist([ytItem], false, e.currentTarget);
+          ytDiv.querySelector('.btn-play-now').onclick = (e) => addItemsToPlaylist([ytItem], true, e.currentTarget);
+          ytList.prepend(ytDiv);
+        }
+      }
+
+      const list = document.getElementById('sniffed-list');
+      if (list.querySelector('div[style*="text-align:center"]')) {
+        list.innerHTML = '';
+      }
+      // Remove duplicate URL if already in list
+      const existing = Array.from(list.querySelectorAll('.stream-item')).find(el => el.dataset.url === st.url);
+      if (existing) existing.remove();
+
+      const div = document.createElement('div');
+      div.className = 'stream-item' + (st.is_main_movie ? ' main-movie' : '');
+      div.dataset.url = st.url;
+      div.innerHTML = `
+        <div class="stream-meta">
+          <strong>${st.title || 'Tab Stream'}</strong>
+          <div class="badge-row">${buildStreamBadgesHtml(st)}</div>
+          <small title="${st.url}">${formatShortUrl(dispUrl)}</small>
+        </div>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button class="btn-secondary btn-sniff-add" style="padding:7px 10px; font-size:0.78rem; color:#6ee7b7; border-color:rgba(16,185,129,0.4); white-space:nowrap;" title="Thêm vào danh sách phát">➕ DS</button>
+          <button class="btn-cast btn-sniff-play" style="padding:8px 14px; font-size:0.82rem; white-space:nowrap;">▶️ Phát</button>
+        </div>
+      `;
+      div.querySelector('.btn-sniff-add').onclick = (e) => addItemsToPlaylist([st], false, e.currentTarget);
+      div.querySelector('.btn-sniff-play').onclick = () => castDirect(st);
+      list.prepend(div);
+    }
+
+    function prependSniffedSubtitle(sub) {
+      if (!sub || !sub.url) return;
+      const list = document.getElementById('sniffed-subs-list');
+      if (list.querySelector('div[style*="text-align:center"]')) {
+        list.innerHTML = '';
+      }
+      const existing = Array.from(list.querySelectorAll('.stream-item')).find(el => el.dataset.url === sub.url);
+      if (existing) existing.remove();
+
+      const el = createSubtitleElement(sub);
+      el.dataset.url = sub.url;
+      list.prepend(el);
+    }
+
+    function renderTvBadge(tvs) {
+      const list = tvs || [];
+      const byIp = {};
+      list.forEach(t => {
+        if (!byIp[t.ip] || (!t.label.startsWith('Smart TV WVC') && byIp[t.ip].label.startsWith('Smart TV WVC'))) {
+          byIp[t.ip] = t;
+        }
+      });
+      const unique = Object.values(byIp);
+      const el = document.getElementById('tv-count');
+      if (unique.length === 0) {
+        el.textContent = '0 TV đang kết nối';
+      } else {
+        const names = unique.map(t => `${t.label}`).join(' | ');
+        el.textContent = `📺 Đã thông: ${names}`;
+      }
+    }
+
+    async function syncStateFromServer(btnEl = null) {
+      const orig = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.textContent = '⏳ Đang đồng bộ...';
+        btnEl.disabled = true;
+      }
+      try {
+        const res = await fetch('/api/info');
+        if (!res.ok) return;
+        const info = await res.json();
+        renderTvBadge(info.connected_tvs || []);
+        renderEpisodes(
+          info.episodes || [],
+          info.current_episode_index,
+          info.auto_next_enabled,
+          info.loop_mode,
+          info.saved_playlists || [],
+        );
+        if (info.last_yt_results && info.last_yt_results.length > 0) {
+          lastYtResults = info.last_yt_results;
+          const qInput = document.getElementById('yt-query');
+          if (qInput && !qInput.value && info.last_yt_query) {
+            qInput.value = info.last_yt_query;
+          }
+          renderYtResults(lastYtResults, info.last_yt_query || '');
+        }
+        if (info.current_media) {
+          if (info.current_media.title) document.getElementById('np-title').textContent = info.current_media.title;
+          currentDuration = info.current_media.duration || 0;
+          document.getElementById('np-time').textContent =
+            `${formatTime(info.current_media.currentTime || 0)} / ${formatTime(currentDuration)}`;
+        }
+      } catch (e) {
+        console.warn('Sync error:', e);
+      } finally {
+        if (btnEl) {
+          btnEl.textContent = '✅ Đã đồng bộ!';
+          setTimeout(() => {
+            btnEl.textContent = orig;
+            btnEl.disabled = false;
+          }, 1200);
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        syncStateFromServer();
+      }
+    });
+
+    function connectPcWs() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${location.host}/ws/pc`);
+
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.action === 'init') {
+          const s = msg.server;
+          document.getElementById('cast-code').textContent = s.code;
+          document.getElementById('guide-code').textContent = s.code;
+          document.getElementById('direct-url').textContent = s.direct_tv_url;
+          document.getElementById('guide-url').textContent = s.direct_tv_url;
+          const mobUrlEl = document.getElementById('mobile-remote-url');
+          if (mobUrlEl) mobUrlEl.textContent = `http://${s.ip}:${s.port}`;
+          setupBookmarklet(`http://${s.ip}:${s.port}`);
+          renderTvBadge(msg.tvs);
+          if (msg.media) {
+            if (msg.media.title) document.getElementById('np-title').textContent = msg.media.title;
+            currentDuration = msg.media.duration || 0;
+            document.getElementById('np-time').textContent =
+              `${formatTime(msg.media.currentTime || 0)} / ${formatTime(currentDuration)}`;
+            if (currentDuration > 0) {
+              document.getElementById('seek-slider').value = ((msg.media.currentTime || 0) / currentDuration) * 100;
+            }
+          }
+          (msg.sniffed_history || []).reverse().forEach(prependSniffedItem);
+          (msg.sniffed_subtitles || []).reverse().forEach(prependSniffedSubtitle);
+          if (msg.last_yt_results && msg.last_yt_results.length > 0) {
+            lastYtResults = msg.last_yt_results;
+            const qInput = document.getElementById('yt-query');
+            if (qInput && !qInput.value && msg.last_yt_query) {
+              qInput.value = msg.last_yt_query;
+            }
+            renderYtResults(lastYtResults, msg.last_yt_query || '');
+          }
+          if (msg.episodes || msg.saved_playlists) {
+            renderEpisodes(msg.episodes || [], msg.current_episode_index, msg.auto_next_enabled, msg.loop_mode, msg.saved_playlists);
+          }
+        } else if (msg.action === 'episodes_updated') {
+          renderEpisodes(msg.episodes || [], msg.current_episode_index, msg.auto_next_enabled, msg.loop_mode, msg.saved_playlists);
+        } else if (msg.action === 'yt_search_updated') {
+          lastYtResults = msg.results || [];
+          const qInput = document.getElementById('yt-query');
+          if (qInput && msg.query) qInput.value = msg.query;
+          renderYtResults(lastYtResults, msg.query || '');
+        } else if (msg.action === 'tv_list') {
+          renderTvBadge(msg.tvs);
+        } else if (msg.action === 'tv_status') {
+          const st = msg.status;
+          currentDuration = st.duration || 0;
+          document.getElementById('np-time').textContent =
+            `${formatTime(st.currentTime)} / ${formatTime(st.duration)}`;
+          if (currentDuration > 0) {
+            document.getElementById('seek-slider').value = (st.currentTime / currentDuration) * 100;
+          }
+        } else if (msg.action === 'sniffed_stream') {
+          prependSniffedItem(msg.stream);
+        } else if (msg.action === 'sniffed_subtitle') {
+          prependSniffedSubtitle(msg.subtitle);
+        } else if (msg.action === 'sniff_cleared') {
+          document.getElementById('sniffed-list').innerHTML = '';
+        } else if (msg.action === 'media_updated') {
+          document.getElementById('np-title').textContent = msg.media.title;
+        }
+      };
+
+      ws.onclose = () => setTimeout(connectPcWs, 2000);
+    }
+
+    connectPcWs();
+  </script>
+</body>
+</html>

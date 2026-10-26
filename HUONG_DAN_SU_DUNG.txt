@@ -1,0 +1,40 @@
+========================================================================
+  HƯỚNG DẪN SỬ DỤNG — WEBVIDEOCAST STUDIO v3.0 (PC, MOBILE & TV)
+========================================================================
+
+1. CÀI ĐẶT LẦN ĐẦU (CHỈ CẦN LÀM 1 LẦN DUY NHẤT):
+   - Giải nén thư mục này ra bất kỳ đâu trên máy tính Windows.
+   - Bấm đúp vào file: `1_CAI_DAT_LAN_DAU.bat`
+   - Chờ khoảng 1-2 phút để công cụ tự động tải thư viện Python, trình duyệt
+     bóc tách ngầm Chromium và mở cổng mạng LAN (30001).
+   - Lưu ý: Để phát YouTube mượt mà nhất, nếu máy chưa có Node.js thì có thể
+     cài thêm Node.js tại https://nodejs.org (hoặc gõ `winget install OpenJS.NodeJS.LTS`).
+
+2. CÁCH CHẠY HÀNG NGÀY:
+   - Bấm đúp vào file: `2_CHAY_WEBVIDEOCAST_STUDIO.bat` (hoặc `run_cast_studio.bat`).
+   - Trình duyệt máy tính sẽ tự động mở trang điều khiển:
+     👉 http://localhost:30001
+
+3. CÁCH KẾT NỐI VỚI SMART TV (LG, SAMSUNG, SONY, TCL, ANDROID TV...):
+   - Cách 1 (Khuyên dùng - Chuẩn nhất):
+     + Trên Smart TV, tải ứng dụng miễn phí "Web Video Caster Receiver"
+       (hoặc mở trình duyệt TV vào trang: http://cast2tv.app).
+     + Nhập mã gồm 2-3 ký tự hiển thị ở góc trên bên phải trang điều khiển PC
+       (hoặc TV sẽ tự động nhận diện và kết nối ngay trong mạng Wi-Fi!).
+   - Cách 2 (Trình duyệt web trên TV):
+     + Mở trình duyệt của TV và gõ đường link "Link mở trực tiếp trên TV"
+       (ví dụ: http://192.168.1.x:30001/tv).
+
+4. CÁCH ĐIỀU KHIỂN TỪ ĐIỆN THOẠI (ĐỒNG BỘ CHUNG VỚI MÁY TÍNH):
+   - Kết nối Điện Thoại vào cùng mạng Wi-Fi với Máy Tính.
+   - Mở Safari (iPhone) hoặc Chrome (Android), gõ địa chỉ hiển thị ở ô màu xanh
+     "📱 Mở điều khiển trên Điện Thoại" trên đầu trang web (ví dụ: http://192.168.1.x:30001).
+   - Toàn bộ Danh Sách Phát, Kết quả tìm kiếm YouTube, Chế độ lặp lại (Nghe nhạc
+     Lofi / Xem phim bộ tự chuyển tập) đều đồng bộ thời gian thực giữa PC và Điện Thoại!
+
+5. CÁCH CÀI TIỆN ÍCH CHROME EXTENSION (TÙY CHỌN):
+   - Mở trình duyệt Chrome / Edge / Cốc Cốc / Brave -> vào trang: chrome://extensions
+   - Bật nút "Developer mode" (Chế độ dành cho nhà phát triển) ở góc phải.
+   - Bấm "Load unpacked" (Tải tiện ích đã giải nén) -> chọn thư mục `chrome_extension`
+     bên trong gói này.
+========================================================================

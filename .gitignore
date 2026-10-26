@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.wvc_browser_profile/
+playlists.json
+wvc.apk
+*.zip
+*.log
+.env

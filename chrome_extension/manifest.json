@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "WebVideoCast — PC to TV Stream Sniffer",
+  "version": "2.0.0",
+  "description": "Tự động bắt mọi luồng .m3u8 / .mp4 / phụ đề trên trình duyệt máy tính và bắn thẳng lên Smart TV qua cast2tv.app / WebVideoCast Studio.",
+  "permissions": [
+    "webRequest",
+    "tabs",
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "WebVideoCast — Bắn Video Lên TV",
+    "default_popup": "popup.html"
+  }
+}

@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>WebVideoCast — Smart TV Receiver</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #05070e;
+      color: #f8fafc;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    /* STANDBY SCREEN */
+    #standby {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(236, 72, 153, 0.16), transparent 45%),
+        radial-gradient(circle at 80% 75%, rgba(59, 130, 246, 0.18), transparent 50%),
+        linear-gradient(135deg, #05070f 0%, #0b1120 50%, #070913 100%);
+      z-index: 10;
+      transition: opacity 0.4s ease;
+    }
+    #standby.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .tv-card {
+      background: rgba(15, 23, 42, 0.78);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 28px;
+      padding: 48px 64px;
+      text-align: center;
+      box-shadow: 0 25px 70px rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(16px);
+      max-width: 880px;
+      width: 90%;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 20px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      font-weight: 600;
+      font-size: 1.05rem;
+      margin-bottom: 24px;
+    }
+    .status-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 12px #10b981;
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.6; }
+    }
+
+    h1 {
+      font-size: 2.8rem;
+      font-weight: 800;
+      background: linear-gradient(90deg, #f472b6, #60a5fa, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 12px;
+      letter-spacing: -0.5px;
+    }
+
+    .subtitle {
+      color: #94a3b8;
+      font-size: 1.25rem;
+      margin-bottom: 36px;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      margin-top: 12px;
+    }
+    .info-box {
+      background: rgba(30, 41, 59, 0.65);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 18px;
+      padding: 20px;
+    }
+    .info-label {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #64748b;
+      margin-bottom: 8px;
+    }
+    .info-val {
+      font-size: 2rem;
+      font-weight: 800;
+      color: #f8fafc;
+      font-family: Consolas, monospace;
+    }
+    .info-val.code {
+      color: #f472b6;
+      letter-spacing: 4px;
+    }
+
+    .clock {
+      position: absolute;
+      top: 36px;
+      right: 48px;
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: rgba(248, 250, 252, 0.75);
+    }
+
+    /* VIDEO CONTAINER */
+    #player-wrap {
+      position: absolute;
+      inset: 0;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      background: #000;
+    }
+    video::cue {
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font-size: 1.5rem;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.9);
+    }
+
+    /* TV OSD OVERLAY */
+    #osd {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 36px 48px;
+      background: linear-gradient(
+        to bottom,
+        rgba(0,0,0,0.75) 0%,
+        transparent 25%,
+        transparent 70%,
+        rgba(0,0,0,0.85) 100%
+      );
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+      z-index: 20;
+    }
+    #osd.visible {
+      opacity: 1;
+    }
+    .osd-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .osd-title {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+    }
+    .osd-badge {
+      padding: 6px 14px;
+      border-radius: 8px;
+      background: rgba(236, 72, 153, 0.85);
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+    .osd-bottom {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .progress-bar-bg {
+      width: 100%;
+      height: 10px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #ec4899, #3b82f6);
+      border-radius: 999px;
+      transition: width 0.2s linear;
+    }
+    .osd-time-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    /* AUTOPLAY UNLOCK BUTTON FOR STRICT TV BROWSERS */
+    #unlock-btn {
+      position: absolute;
+      bottom: 40px;
+      padding: 14px 28px;
+      border-radius: 999px;
+      border: 1px solid rgba(244, 114, 182, 0.5);
+      background: rgba(236, 72, 153, 0.25);
+      color: #fff;
+      font-size: 1.1rem;
+      font-weight: 600;
+      cursor: pointer;
+      z-index: 30;
+    }
+    #unlock-btn.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="standby">
+    <div class="clock" id="clock">--:--</div>
+    <div class="tv-card">
+      <div class="status-pill">
+        <span class="status-dot" id="ws-dot"></span>
+        <span id="ws-status">ĐANG KẾT NỐI MÁY TÍNH...</span>
+      </div>
+      <h1>WebVideoCast Receiver</h1>
+      <p class="subtitle">Sẵn sàng nhận luồng video 4K / HLS (.m3u8) / MP4 trực tiếp từ trình duyệt máy tính</p>
+      <div class="info-grid">
+        <div class="info-box">
+          <div class="info-label">Mã kết nối cast2tv.app</div>
+          <div class="info-val code" id="tv-code">--</div>
+        </div>
+        <div class="info-box">
+          <div class="info-label">Máy chủ PC (LAN)</div>
+          <div class="info-val" id="tv-ip">--</div>
+        </div>
+      </div>
+    </div>
+    <button id="unlock-btn" onclick="unlockAudio()">Bấm OK trên điều khiển TV để kích hoạt Âm thanh tự động</button>
+  </div>
+
+  <div id="player-wrap">
+    <video id="video" playsinline crossorigin="anonymous"></video>
+  </div>
+
+  <div id="osd">
+    <div class="osd-top">
+      <div class="osd-title" id="osd-title">Đang tải video...</div>
+      <div class="osd-badge" id="osd-state">PLAYING</div>
+    </div>
+    <div class="osd-bottom">
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="osd-progress"></div>
+      </div>
+      <div class="osd-time-row">
+        <span id="osd-time">00:00 / 00:00</span>
+        <span id="osd-vol">Âm lượng: 100%</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const standby = document.getElementById('standby');
+    const osd = document.getElementById('osd');
+    const unlockBtn = document.getElementById('unlock-btn');
+    let hls = null;
+    let ws = null;
+    let osdTimer = null;
+
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clock').textContent =
+        now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function formatTime(sec) {
+      if (!sec || isNaN(sec) || !isFinite(sec)) return '00:00';
+      sec = Math.floor(sec);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (h > 0) {
+        return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+      }
+      return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+
+    function showOsd(stateText) {
+      if (stateText) {
+        document.getElementById('osd-state').textContent = stateText;
+      }
+      osd.classList.add('visible');
+      clearTimeout(osdTimer);
+      osdTimer = setTimeout(() => osd.classList.remove('visible'), 4000);
+    }
+
+    function unlockAudio() {
+      video.muted = false;
+      video.play().catch(() => {});
+      unlockBtn.classList.add('hidden');
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    }
+
+    function loadMedia(media) {
+      if (!media || !media.url) {
+        if (hls) { hls.destroy(); hls = null; }
+        video.pause();
+        video.removeAttribute('src');
+        standby.classList.remove('hidden');
+        return;
+      }
+
+      standby.classList.add('hidden');
+      document.getElementById('osd-title').textContent = media.title || 'Web Video Stream';
+      showOsd('ĐANG TẢI...');
+
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+
+      // Clear old subtitle tracks
+      Array.from(video.querySelectorAll('track')).forEach(t => t.remove());
+      if (Array.isArray(media.subtitles)) {
+        media.subtitles.forEach((sub, idx) => {
+          const track = document.createElement('track');
+          track.kind = 'subtitles';
+          track.label = sub.label || `Phụ đề ${idx + 1}`;
+          track.srclang = 'vi';
+          track.src = sub.url;
+          if (idx === 0) track.default = true;
+          video.appendChild(track);
+        });
+      }
+
+      const isHls = media.type === 'hls' || media.url.includes('.m3u8') || media.original_url?.includes('.m3u8');
+
+      const startPlayback = () => {
+        if (media.currentTime && media.currentTime > 1) {
+          video.currentTime = media.currentTime;
+        }
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.then(() => {
+            unlockBtn.classList.add('hidden');
+            showOsd('ĐANG PHÁT');
+          }).catch(err => {
+            // Smart TV browser blocked unmuted autoplay -> fallback to muted play first
+            console.warn('Unmuted autoplay blocked, retrying muted:', err);
+            video.muted = true;
+            video.play().then(() => {
+              showOsd('ĐANG PHÁT (BẤM OK ĐỂ BẬT TIẾNG)');
+            }).catch(() => {});
+          });
+        }
+      };
+
+      if (isHls && window.Hls && Hls.isSupported()) {
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          backBufferLength: 90,
+          maxBufferLength: 60,
+        });
+        hls.loadSource(media.url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          startPlayback();
+        });
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
+                // Fallback to native video element
+                video.src = media.url;
+                startPlayback();
+                break;
+            }
+          }
+        });
+      } else {
+        video.src = media.url;
+        video.onloadedmetadata = () => startPlayback();
+      }
+    }
+
+    function handleControl(cmd, val) {
+      switch (cmd) {
+        case 'play':
+          video.play().catch(() => {});
+          showOsd('PLAY');
+          break;
+        case 'pause':
+          video.pause();
+          showOsd('TẠM DỪNG');
+          break;
+        case 'seek':
+          video.currentTime = Number(val);
+          showOsd(`TUA ĐẾN ${formatTime(val)}`);
+          break;
+        case 'seek_rel':
+          video.currentTime = Math.max(0, video.currentTime + Number(val));
+          showOsd(`${val > 0 ? '+' : ''}${val}s`);
+          break;
+        case 'volume':
+          video.muted = false;
+          video.volume = Math.max(0, Math.min(1, Number(val)));
+          showOsd(`ÂM LƯỢNG ${Math.round(video.volume * 100)}%`);
+          break;
+        case 'mute':
+          video.muted = Boolean(val);
+          showOsd(video.muted ? 'TẮT TIẾNG' : 'BẬT TIẾNG');
+          break;
+        case 'rate':
+          video.playbackRate = Number(val) || 1.0;
+          showOsd(`TỐC ĐỘ ${video.playbackRate}x`);
+          break;
+        case 'stop':
+          loadMedia(null);
+          break;
+      }
+      sendStatus();
+    }
+
+    function sendStatus() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({
+        action: 'status',
+        currentTime: video.currentTime || 0,
+        duration: video.duration || 0,
+        playing: !video.paused,
+        volume: video.volume,
+        muted: video.muted,
+        playbackRate: video.playbackRate,
+      }));
+    }
+
+    video.addEventListener('timeupdate', () => {
+      const cur = video.currentTime || 0;
+      const dur = video.duration || 0;
+      const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+      document.getElementById('osd-progress').style.width = `${pct}%`;
+      document.getElementById('osd-time').textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+      document.getElementById('osd-vol').textContent =
+        video.muted ? 'Đang tắt tiếng (Bấm OK để bật)' : `Âm lượng: ${Math.round(video.volume * 100)}%`;
+    });
+
+    video.addEventListener('ended', () => {
+      showOsd('HẾT TẬP — ĐANG CHUYỂN TẬP TIẾP THEO...');
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ action: 'ended' }));
+      }
+    });
+
+    setInterval(sendStatus, 1000);
+
+    // TV Remote Control Keybindings
+    window.addEventListener('keydown', (e) => {
+      if (video.muted) video.muted = false;
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (standby.classList.contains('hidden')) {
+          if (video.paused) { video.play(); showOsd('PLAY'); }
+          else { video.pause(); showOsd('TẠM DỪNG'); }
+        } else {
+          unlockAudio();
+        }
+      } else if (e.key === 'ArrowRight') {
+        handleControl('seek_rel', 10);
+      } else if (e.key === 'ArrowLeft') {
+        handleControl('seek_rel', -10);
+      } else if (e.key === 'ArrowUp') {
+        handleControl('volume', Math.min(1, video.volume + 0.1));
+      } else if (e.key === 'ArrowDown') {
+        handleControl('volume', Math.max(0, video.volume - 0.1));
+      }
+    });
+
+    window.addEventListener('click', () => {
+      if (video.muted) {
+        video.muted = false;
+        showOsd('ĐÃ BẬT TIẾNG');
+      } else {
+        showOsd(video.paused ? 'TẠM DỪNG' : 'ĐANG PHÁT');
+      }
+    });
+
+    function connectWs() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws/tv`);
+
+      ws.onopen = () => {
+        document.getElementById('ws-status').textContent = 'ĐÃ KẾT NỐI VỚI MÁY TÍNH — SẴN SÀNG PHÁT';
+        ws.send(JSON.stringify({
+          action: 'hello',
+          label: `TV Browser (${navigator.platform || 'Smart TV'})`
+        }));
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.action === 'init') {
+            if (msg.server) {
+              document.getElementById('tv-code').textContent = msg.server.code;
+              document.getElementById('tv-ip').textContent = `${msg.server.ip}:${msg.server.port}`;
+            }
+            if (msg.media && msg.media.url && msg.media.playing) {
+              loadMedia(msg.media);
+            }
+          } else if (msg.action === 'load') {
+            loadMedia(msg.media);
+          } else if (msg.action === 'control') {
+            handleControl(msg.command, msg.value);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      };
+
+      ws.onclose = () => {
+        document.getElementById('ws-status').textContent = 'MẤT KẾT NỐI — ĐANG KẾT NỐI LẠI...';
+        setTimeout(connectWs, 2000);
+      };
+    }
+
+    connectWs();
+  </script>
+</body>
+</html>

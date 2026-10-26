@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {
+      width: 390px;
+      margin: 0;
+      padding: 16px;
+      background: #0b1120;
+      color: #f8fafc;
+      font-family: 'Segoe UI', sans-serif;
+    }
+    h3 {
+      margin: 0 0 6px;
+      font-size: 1.05rem;
+      color: #f472b6;
+    }
+    p {
+      margin: 0 0 12px;
+      font-size: 0.8rem;
+      color: #94a3b8;
+    }
+    .item {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    .meta {
+      overflow: hidden;
+      flex: 1;
+    }
+    .meta strong {
+      display: block;
+      font-size: 0.82rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .meta small {
+      display: block;
+      font-size: 0.72rem;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    button {
+      background: linear-gradient(135deg, #ec4899, #8b5cf6);
+      border: none;
+      color: #fff;
+      padding: 7px 12px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.78rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .footer-btn {
+      width: 100%;
+      margin-top: 8px;
+      background: #334155;
+    }
+  </style>
+</head>
+<body>
+  <h3>⚡ WebVideoCast Sniffer</h3>
+  <p>Các luồng video (.m3u8 / .mp4) bắt được trên tab này:</p>
+  <div id="list"></div>
+  <button class="footer-btn" id="open-studio">🖥️ Mở Bảng Điều Khiển PC (localhost:30001)</button>
+  <script src="popup.js"></script>
+</body>
+</html>
