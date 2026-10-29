@@ -143,6 +143,15 @@ def format_resolution_badge(width: int, height: int) -> str:
 import sys
 import threading
 import webbrowser
+from contextlib import asynccontextmanager
+
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 PORT = int(os.environ.get("WVC_PORT", "30001"))
 IS_FROZEN = getattr(sys, "frozen", False)
@@ -153,7 +162,18 @@ STATIC_DIR.mkdir(exist_ok=True)
 if str(BUNDLE_DIR) not in os.environ.get("PATH", ""):
     os.environ["PATH"] = f"{BUNDLE_DIR}{os.pathsep}{os.environ.get('PATH', '')}"
 
-app = FastAPI(title="WebVideoCast PC Studio", version="3.0.0")
+
+@asynccontextmanager
+async def _app_lifespan(app_instance: FastAPI):
+    clock_task = asyncio.create_task(_realtime_media_clock_loop())
+    try:
+        yield
+    finally:
+        clock_task.cancel()
+        await close_shared_http_client()
+
+
+app = FastAPI(title="WebVideoCast PC Studio", version="3.0.0", lifespan=_app_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -178,8 +198,78 @@ async def add_private_network_headers(request: Request, call_next):
     resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Headers"] = "*"
     resp.headers["Access-Control-Allow-Private-Network"] = "true"
-    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    # Allow segment caching on TV for smooth playback while keeping API/M3U8 responses fresh
+    if request.url.path.startswith("/proxy/segment.ts"):
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+    elif "Cache-Control" not in resp.headers:
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return resp
+
+
+from collections import OrderedDict
+
+_SHARED_HTTP_CLIENT: Optional[httpx.AsyncClient] = None
+
+
+def get_shared_http_client() -> httpx.AsyncClient:
+    global _SHARED_HTTP_CLIENT
+    if _SHARED_HTTP_CLIENT is None or _SHARED_HTTP_CLIENT.is_closed:
+        _SHARED_HTTP_CLIENT = httpx.AsyncClient(
+            verify=False,
+            follow_redirects=True,
+            timeout=httpx.Timeout(35.0, connect=8.0),
+            limits=httpx.Limits(max_connections=120, max_keepalive_connections=50, keepalive_expiry=45.0),
+        )
+    return _SHARED_HTTP_CLIENT
+
+
+async def close_shared_http_client():
+    global _SHARED_HTTP_CLIENT
+    if _SHARED_HTTP_CLIENT is not None and not _SHARED_HTTP_CLIENT.is_closed:
+        try:
+            await _SHARED_HTTP_CLIENT.aclose()
+        except Exception:
+            pass
+    _SHARED_HTTP_CLIENT = None
+
+
+DEFAULT_DISK_CACHE_DIR = BASE_DIR / "stream_cache"
+
+BUFFER_PRESETS: Dict[str, Dict[str, Any]] = {
+    "normal": {
+        "mode": "normal",
+        "enabled": True,
+        "storage_type": "disk",  # "disk" (Ổ cứng - Không tốn RAM) | "ram" (Bộ nhớ RAM)
+        "prefetch_segments": 5,
+        "concurrency": 3,
+        "max_ram_mb": 250,
+        "mp4_readahead_mb": 16,
+        "prebuffer_before_play": False,
+        "hls_max_buffer_sec": 90,
+    },
+    "weak_net": {
+        "mode": "weak_net",
+        "enabled": True,
+        "storage_type": "disk",
+        "prefetch_segments": 15,
+        "concurrency": 5,
+        "max_ram_mb": 800,
+        "mp4_readahead_mb": 48,
+        "prebuffer_before_play": True,
+        "hls_max_buffer_sec": 240,
+    },
+    "ultra": {
+        "mode": "ultra",
+        "enabled": True,
+        "storage_type": "disk",
+        "prefetch_segments": 30,
+        "concurrency": 6,
+        "max_ram_mb": 2048,
+        "mp4_readahead_mb": 96,
+        "prebuffer_before_play": True,
+        "hls_max_buffer_sec": 480,
+    },
+}
 
 
 class CastState:
@@ -220,6 +310,9 @@ class CastState:
         self.current_episode_index: int = -1
         self.auto_next_enabled: bool = True
         self.loop_mode: str = "all"  # "off" | "all" (lặp toàn bộ danh sách) | "one" (lặp 1 bài)
+        self.skip_intro_sec: int = 0
+        self.skip_outro_sec: int = 0
+        self.sponsorblock_enabled: bool = True
         self.saved_playlists: Dict[str, List[Dict[str, Any]]] = {}
         self.last_yt_query: str = ""
         self.last_yt_results: List[Dict[str, Any]] = []
@@ -228,7 +321,131 @@ class CastState:
         self.max_position_reached: float = 0.0
         self.sniffing_yt_urls: set = set()
         self.yt_stream_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        self.virtual_m3u8_store: Dict[str, Any] = {}
+
+        # Smart Disk / RAM Buffer & Multi-Thread HLS/MP4 Read-Ahead Engine (Chống Đứng Hình Khi Mạng Yếu)
+        self.buffer_config: Dict[str, Any] = {
+            **BUFFER_PRESETS["weak_net"],
+            "disk_dir": str(DEFAULT_DISK_CACHE_DIR),
+        }
+        self.hls_segment_cache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self.hls_cache_bytes: int = 0
+        self.hls_inflight_tasks: Dict[str, asyncio.Task] = {}
+        self.hls_next_map: Dict[str, Dict[str, Any]] = {}
+        self.hls_prefetch_sem: asyncio.Semaphore = asyncio.Semaphore(5)
+        self.hls_cache_hits: int = 0
+        self.hls_cache_misses: int = 0
+        self.hls_prefetched_count: int = 0
+        self.mp4_buffered_bytes: int = 0
+
+        # Subtitle Setup & Customization State (Font Size, Colors, Opacity, Outline, Position, Sync Offset)
+        self.subtitle_style: Dict[str, Any] = {
+            "textSize": 1.5,            # 1.5 = 150% (0.6 -> 3.0)
+            "textColor": "#FFFF00",     # Vàng rạp phim (#FFFF00) hoặc Trắng (#FFFFFF)
+            "backgroundColor": "#000000",
+            "backgroundOpacity": 0.65,  # 0.0 (Trong suốt) -> 1.0 (Đen đặc)
+            "edgeStyle": "outline",     # "outline" | "shadow" | "normal"
+            "edgeColor": "#000000",
+            "textFont": "sans-serif",   # "sans-serif" | "serif" | "monospace"
+            "textStyle": "bold",        # "bold" | "normal" | "italic" | "bold_italic"
+            "bottomPosition": 8,        # 2% -> 45% (cách đáy màn hình TV)
+            "offsetSec": 0.0,           # Độ trễ phụ đề (+/- giây)
+        }
+        self.uploaded_subtitles: Dict[str, Dict[str, Any]] = {}
+
         self._load_playlists_from_disk()
+        self.ensure_disk_cache_dir()
+        self._cleanup_disk_cache_files()
+
+    def get_disk_cache_dir(self) -> Path:
+        raw_dir = (self.buffer_config.get("disk_dir") or "").strip()
+        p = Path(raw_dir) if raw_dir else DEFAULT_DISK_CACHE_DIR
+        return p
+
+    def ensure_disk_cache_dir(self) -> Path:
+        p = self.get_disk_cache_dir()
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            p = DEFAULT_DISK_CACHE_DIR
+            p.mkdir(parents=True, exist_ok=True)
+            self.buffer_config["disk_dir"] = str(p)
+        return p
+
+    def _cleanup_disk_cache_files(self):
+        try:
+            d = self.get_disk_cache_dir()
+            if d.exists() and d.is_dir():
+                for fp in d.iterdir():
+                    if fp.is_file() and (fp.name.startswith("seg_") or fp.name.startswith("mp4chunk_")):
+                        try:
+                            fp.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    def build_wvc_subtitle_style_cmd(self) -> Dict[str, Any]:
+        """
+        Builds the exact Native WVC `subtitlesStyleSet` command (CommandReceiver.ts & Subtitles.ts).
+        Note: Native WVC Subtitles.ts line 373 evaluates `(subtitleInfo.backgroundOpacity) ? ... : 0.75`,
+        so if backgroundOpacity is 0.0 (transparent), we send 0.001 so JS treats it as truthy and renders 0% background!
+        """
+        st = self.subtitle_style
+        bg_op = float(st.get("backgroundOpacity", 0.65))
+        wvc_bg_op = 0.001 if bg_op <= 0.005 else min(1.0, max(0.001, bg_op))
+        t_style = str(st.get("textStyle") or "bold").replace("bold_italic", "italic bold")
+        return {
+            "cmd": "subtitlesStyleSet",
+            "backgroundColor": str(st.get("backgroundColor") or "#000000"),
+            "backgroundOpacity": wvc_bg_op,
+            "textFont": str(st.get("textFont") or "sans-serif"),
+            "textColor": str(st.get("textColor") or "#FFFF00"),
+            "textSize": float(st.get("textSize") or 1.5),
+            "textStyle": t_style,
+            "edgeColor": str(st.get("edgeColor") or "#000000"),
+            "edgeStyle": str(st.get("edgeStyle") or "outline"),
+        }
+
+    def get_buffer_stats(self) -> Dict[str, Any]:
+        hls_mb = round(self.hls_cache_bytes / (1024 * 1024), 2)
+        mp4_mb = round(self.mp4_buffered_bytes / (1024 * 1024), 2)
+        used_mb = round(hls_mb + mp4_mb, 1)
+        total_req = self.hls_cache_hits + self.hls_cache_misses
+        hit_rate = round((self.hls_cache_hits / total_req) * 100) if total_req > 0 else 100
+        return {
+            "mode": self.buffer_config.get("mode", "weak_net"),
+            "storage_type": self.buffer_config.get("storage_type", "disk"),
+            "disk_dir": str(self.get_disk_cache_dir()),
+            "hls_cached_segments": len(self.hls_segment_cache),
+            "cached_segments": len(self.hls_segment_cache),
+            "inflight_tasks": len(self.hls_inflight_tasks),
+            "hls_cache_mb": hls_mb,
+            "mp4_buffered_mb": mp4_mb,
+            "ram_used_mb": used_mb,
+            "max_ram_mb": self.buffer_config.get("max_ram_mb", 800),
+            "prefetch_segments": self.buffer_config.get("prefetch_segments", 15),
+            "prefetched_total": self.hls_prefetched_count,
+            "hls_cache_hits": self.hls_cache_hits,
+            "hit_rate_pct": hit_rate,
+        }
+
+    def clear_ram_buffer(self):
+        for t in list(self.hls_inflight_tasks.values()):
+            if not t.done():
+                t.cancel()
+        self.hls_inflight_tasks.clear()
+        for entry in list(self.hls_segment_cache.values()):
+            if isinstance(entry, dict) and entry.get("path"):
+                try:
+                    Path(entry["path"]).unlink(missing_ok=True)
+                except Exception:
+                    pass
+        self.hls_segment_cache.clear()
+        self.hls_next_map.clear()
+        self.hls_cache_bytes = 0
+        self.mp4_buffered_bytes = 0
+        self._cleanup_disk_cache_files()
 
     def _playlists_file(self) -> Path:
         return BASE_DIR / "playlists.json"
@@ -241,8 +458,19 @@ class CastState:
                 self.saved_playlists = data.get("saved_playlists") or {}
                 self.loop_mode = data.get("loop_mode") or "all"
                 self.auto_next_enabled = bool(data.get("auto_next_enabled", True))
+                self.skip_intro_sec = max(0, int(data.get("skip_intro_sec") or 0))
+                self.skip_outro_sec = max(0, int(data.get("skip_outro_sec") or 0))
+                self.sponsorblock_enabled = bool(data.get("sponsorblock_enabled", True))
                 self.last_yt_query = data.get("last_yt_query") or ""
                 self.last_yt_results = data.get("last_yt_results") or []
+                if isinstance(data.get("subtitle_style"), dict):
+                    self.subtitle_style.update(data["subtitle_style"])
+                    if int(self.subtitle_style.get("bottomPosition", 8)) > 60:
+                        self.subtitle_style["bottomPosition"] = 100 - int(self.subtitle_style["bottomPosition"])
+                if isinstance(data.get("buffer_config"), dict):
+                    self.buffer_config.update(data["buffer_config"])
+                    workers = max(1, min(8, int(self.buffer_config.get("concurrency") or self.buffer_config.get("parallel_workers") or 5)))
+                    self.hls_prefetch_sem = asyncio.Semaphore(workers)
                 if not self.episodes and data.get("last_queue"):
                     self.episodes = data["last_queue"]
                     self.current_episode_index = next((i for i, e in enumerate(self.episodes) if e.get("active")), 0) if self.episodes else -1
@@ -264,6 +492,11 @@ class CastState:
                     {
                         "loop_mode": self.loop_mode,
                         "auto_next_enabled": self.auto_next_enabled,
+                        "skip_intro_sec": self.skip_intro_sec,
+                        "skip_outro_sec": self.skip_outro_sec,
+                        "sponsorblock_enabled": self.sponsorblock_enabled,
+                        "subtitle_style": self.subtitle_style,
+                        "buffer_config": self.buffer_config,
                         "last_queue": clean_q,
                         "saved_playlists": clean_saved,
                         "last_yt_query": self.last_yt_query,
@@ -370,6 +603,77 @@ async def trigger_auto_next_if_ready(reason: str = ""):
         asyncio.create_task(play_episode_by_index(target_idx))
 
 
+async def check_and_apply_skip_rules(cur: float, dur: float, from_hardware_pos: bool = False):
+    """
+    Real-Time Auto-Skip Intro / Outro & YouTube SponsorBlock Engine:
+    1. Series Auto-Skip Intro (`state.skip_intro_sec > 0`):
+       If playback starts in `[0.5s .. skip_intro_sec - 2.0s]` on a full episode (`dur > skip_intro_sec + 45s`)
+       and hasn't skipped intro yet for this episode, seeks TV directly to `skip_intro_sec`!
+    2. YouTube SponsorBlock (`state.sponsorblock_enabled == True`):
+       Checks `state.current_media.get("skip_segments")` (fetched from `sponsor.ajay.app`).
+       Whenever `seg["start"] <= cur < seg["end"] - 1.5`, automatically seeks TV to `seg["end"]`
+       (or triggers Auto-Next if the segment reaches the end of the video)!
+    3. Series Auto-Skip Outro (`state.skip_outro_sec > 0`):
+       When `cur >= dur - effective_outro`, triggers `trigger_auto_next_if_ready` to jump to the next episode early!
+    """
+    now = time.time()
+    skip_intro = int(state.skip_intro_sec or 0)
+    skip_outro = int(state.skip_outro_sec or 0)
+
+    # 1. Auto-Skip Intro on Smart TV if TV ignored initial loadMedia position and started at 0s
+    if (
+        from_hardware_pos
+        and skip_intro > 0
+        and dur > (skip_intro + 45)
+        and 0.3 <= cur < (skip_intro - 2.0)
+        and not state.current_media.get("intro_skipped")
+        and (now - state.current_media.get("last_skip_seek_ts", 0.0)) > 4.0
+    ):
+        state.current_media["intro_skipped"] = True
+        state.current_media["last_skip_seek_ts"] = now
+        state.current_media["currentTime"] = float(skip_intro)
+        print(f"[SKIP INTRO] Auto-jumping past Intro from {cur:.1f}s -> {skip_intro}s!", flush=True)
+        await state.broadcast_to_tvs(
+            ws_message={"action": "control", "command": "seek", "value": float(skip_intro)},
+            wvc_command={"cmd": "positionSet", "position": int(skip_intro * 1000)},
+        )
+        return
+
+    # 2. YouTube SponsorBlock segments (sponsor / intro / outro / selfpromo / music_offtopic)
+    if state.sponsorblock_enabled:
+        segments = state.current_media.get("skip_segments") or []
+        for seg in segments:
+            s_start = float(seg.get("start") or 0)
+            s_end = float(seg.get("end") or 0)
+            s_cat = seg.get("category") or "sponsor"
+            if s_end > s_start + 1.5 and s_start <= cur < (s_end - 1.5):
+                if (now - state.current_media.get("last_skip_seek_ts", 0.0)) <= 4.5:
+                    break
+                state.current_media["last_skip_seek_ts"] = now
+                if dur > 20 and s_end >= (dur - 2.5):
+                    print(f"[SPONSORBLOCK OUTRO ({s_cat})] Segment {s_start:.1f}s->{s_end:.1f}s reaches end -> Auto-Next!", flush=True)
+                    await trigger_auto_next_if_ready(f"SponsorBlock {s_cat} reached end at {cur:.1f}s/{dur:.1f}s")
+                    return
+                state.current_media["currentTime"] = s_end
+                print(f"[SPONSORBLOCK ({s_cat})] Auto-skipping {s_start:.1f}s -> {s_end:.1f}s!", flush=True)
+                await state.broadcast_to_tvs(
+                    ws_message={"action": "control", "command": "seek", "value": s_end},
+                    wvc_command={"cmd": "positionSet", "position": int(s_end * 1000)},
+                )
+                return
+
+    # 3. Auto-Skip Outro / End-of-Episode Auto-Next
+    effective_outro = skip_outro if (skip_outro > 0 and dur > (skip_intro + skip_outro + 45)) else 0
+    threshold = max(1.5, float(effective_outro))
+    if dur > 20 and cur >= (dur - threshold):
+        reason_str = (
+            f"Skip Outro ({effective_outro}s before end at {cur:.1f}s/{dur:.1f}s)"
+            if effective_outro > 0
+            else f"Clock/Pos reached {cur:.1f}s/{dur:.1f}s"
+        )
+        await trigger_auto_next_if_ready(reason_str)
+
+
 async def _realtime_media_clock_loop():
     """
     1-Second Real-Time Media Clock & WVC Hardware Position Poller:
@@ -411,28 +715,23 @@ async def _realtime_media_clock_loop():
                         "duration": dur,
                         "playing": True,
                         "playbackRate": rate,
+                        "buffer_stats": state.get_buffer_stats(),
                     },
                 })
 
             # Poll exact hardware position from WVC Receiver on TV via {"cmd": "positionGet"}
-            near_end = (dur > 20 and (dur - cur) <= 30.0)
+            eff_outro = state.skip_outro_sec if (state.skip_outro_sec > 0 and dur > (state.skip_intro_sec + state.skip_outro_sec + 45)) else 0
+            near_end = (dur > 20 and (dur - cur) <= (30.0 + eff_outro)) or (state.skip_intro_sec > 0 and cur < state.skip_intro_sec)
             poll_interval = 2 if near_end else 5
             if tick_count % poll_interval == 0:
                 for cid, q in list(state.wvc_queues.items()):
                     if q.empty():
                         await q.put({"cmd": "positionGet"})
 
-            # Trigger Auto-Next / Loop if clock reaches the end of the track/episode
-            if dur > 20 and cur >= (dur - 1.2):
-                await trigger_auto_next_if_ready(f"Clock reached {cur:.1f}s/{dur:.1f}s")
+            # Check Skip Intro / SponsorBlock / Skip Outro / Auto-Next
+            await check_and_apply_skip_rules(cur, dur, from_hardware_pos=False)
         except Exception:
             pass
-
-
-@app.on_event("startup")
-async def _start_background_clock():
-    asyncio.create_task(_realtime_media_clock_loop())
-
 
 
 # ============================================================================
@@ -573,7 +872,8 @@ async def wvc_state_update(request: Request):
             },
         })
         # Auto-Next / Loop when TV transitions to idle/ended/completed near the end of a track/episode!
-        if tv_state in ("idle", "ended", "completed", "stopped") and dur > 20 and max_pos >= (dur - 15.0):
+        eff_outro = state.skip_outro_sec if (state.skip_outro_sec > 0 and dur > (state.skip_intro_sec + state.skip_outro_sec + 45)) else 0
+        if tv_state in ("idle", "ended", "completed", "stopped") and dur > 20 and max_pos >= (dur - max(15.0, float(eff_outro) + 5.0)):
             await trigger_auto_next_if_ready(f"TV state={tv_state} at {max_pos:.1f}s/{dur:.1f}s")
     except Exception:
         pass
@@ -609,9 +909,7 @@ async def wvc_position_update(request: Request):
                 "playing": state.current_media.get("playing", True),
             },
         })
-        # Also trigger Auto-Next / Loop if position reaches within 1.5s of total duration!
-        if dur > 20 and pos >= (dur - 1.5):
-            await trigger_auto_next_if_ready(f"Position reached {pos:.1f}s/{dur:.1f}s")
+        await check_and_apply_skip_rules(pos, dur, from_hardware_pos=True)
     except Exception:
         pass
     return JSONResponse({"status": "ok"})
@@ -740,10 +1038,274 @@ def strip_disguised_mpegts_header(data: bytes) -> bytes:
     return data
 
 
+def decrypt_enc_aesgcm_m3u8_if_needed(text: str, stream_url: str, referer_url: str = "") -> str:
+    """
+    Universal Pure-Python Decryptor for `#ENC-AESGCM;iv=...` / `#EXT-X-B65:0-138` encrypted HLS playlists
+    (used by embed14.streamc.xyz / streamc / rophim / cobephim Vietsub embeds):
+    - Derives the 256-bit AES-GCM key via `HMAC-SHA256("stream-derive-v1", video_hash)`
+    - Extracts `video_hash` automatically from the `/eyJ0Ijoi...` token in `stream_url` or `?hash=` in `referer_url`
+    - Decrypts the Base64 ciphertext+tag into a standard `#EXTM3U` playlist with `#EXTINF` segments!
+    """
+    if "#ENC-AESGCM" not in text:
+        return text
+    try:
+        import hashlib
+        import hmac
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+        iv_m = re.search(r"#ENC-AESGCM;iv=([a-fA-F0-9]{24})", text)
+        if not iv_m or len(lines) < 4:
+            return text
+        iv = bytes.fromhex(iv_m.group(1))
+        b64_line = lines[-1]
+
+        video_hash = ""
+        for cand in (referer_url, stream_url):
+            hm = re.search(r"[?&]hash=([a-fA-F0-9]{16,64})", cand or "")
+            if hm:
+                video_hash = hm.group(1)
+                break
+        if not video_hash:
+            path_part = urllib.parse.urlparse(stream_url).path.lstrip("/").replace("/", "")
+            if path_part.startswith("eyJ0Ijoi"):
+                pad1 = "=" * ((4 - len(path_part) % 4) % 4)
+                outer = json.loads(base64.urlsafe_b64decode(path_part + pad1).decode("utf-8", errors="replace"))
+                tok_part = (outer.get("t") or "").split(".")[0]
+                if tok_part:
+                    pad2 = "=" * ((4 - len(tok_part) % 4) % 4)
+                    inner = json.loads(base64.urlsafe_b64decode(tok_part + pad2).decode("utf-8", errors="replace"))
+                    video_hash = inner.get("v") or ""
+        if not video_hash:
+            return text
+
+        key = hmac.new(b"stream-derive-v1", video_hash.encode("utf-8"), hashlib.sha256).digest()
+        combined = base64.b64decode(b64_line)
+        pt = AESGCM(key).decrypt(iv, combined, None).decode("utf-8", errors="replace")
+        if pt.lstrip().startswith("#EXTM3U"):
+            return pt
+    except Exception as e:
+        print(f"[AESGCM M3U8 DECRYPT WARN] {stream_url[:80]}: {e}", flush=True)
+    return text
+
+
+def _evict_hls_cache_if_needed():
+    max_bytes = max(32, int(state.buffer_config.get("max_ram_mb") or 800)) * 1024 * 1024
+    while state.hls_segment_cache and state.hls_cache_bytes > max_bytes:
+        _, old_entry = state.hls_segment_cache.popitem(last=False)
+        if isinstance(old_entry, dict):
+            old_sz = int(old_entry.get("size") or 0)
+            old_path = old_entry.get("path")
+            if old_path:
+                try:
+                    Path(old_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+        else:
+            old_sz = len(old_entry[0])
+        state.hls_cache_bytes = max(0, state.hls_cache_bytes - old_sz)
+
+
+def _write_bytes_to_file_sync(path: Path, data: bytes):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_bytes(data)
+    tmp_path.replace(path)
+
+
+def _read_and_optional_delete_sync(path: Path, delete_after: bool = False) -> bytes:
+    try:
+        data = path.read_bytes()
+    finally:
+        if delete_after:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+    return data
+
+
+async def _download_and_clean_segment(target_url: str, req_headers: Dict[str, str]) -> Tuple[int, bytes]:
+    """
+    Downloads an HLS segment (.ts / .m4s / disguised .png/.jpg) using the persistent HTTP connection pool
+    with 3x automatic retry + DPI TLS split fallback when the network is weak or jittery.
+    """
+    client = await get_shared_http_client()
+    last_status = 502
+    raw_bytes = b""
+
+    for attempt in range(3):
+        try:
+            resp = await client.get(
+                target_url,
+                headers=req_headers,
+                timeout=httpx.Timeout(22.0, connect=7.0),
+            )
+            last_status = resp.status_code
+            if resp.status_code in (200, 206) and resp.content:
+                raw_bytes = resp.content
+                break
+            if resp.status_code in (403, 404, 429, 500, 502, 503, 504) and attempt < 2:
+                await asyncio.sleep(0.35 * (attempt + 1))
+                continue
+            raw_bytes = resp.content
+            break
+        except Exception:
+            if attempt == 1 and target_url.startswith("https://"):
+                try:
+                    st_dpi, _, b_dpi = await asyncio.to_thread(fetch_dpi_tls_split_sync, target_url, req_headers, 10.0)
+                    if st_dpi in (200, 206) and b_dpi:
+                        last_status = st_dpi
+                        raw_bytes = b_dpi
+                        break
+                except Exception:
+                    pass
+            if attempt < 2:
+                await asyncio.sleep(0.35 * (attempt + 1))
+
+    clean_bytes = strip_disguised_mpegts_header(raw_bytes)
+    return (200 if last_status in (200, 206) else last_status), clean_bytes
+
+
+async def get_or_fetch_hls_segment(
+    target_url: str,
+    req_headers: Dict[str, str],
+    is_prefetch: bool = False,
+) -> Tuple[int, bytes]:
+    """
+    Smart Disk / RAM Cache + Single-Flight Request Deduplicator for HLS segments:
+    - When `storage_type == "disk"` (default): stores pre-fetched `.ts` segments on the hard drive
+      (`stream_cache/seg_<sha1>.ts`) so 0 MB of system RAM is consumed by cached segments!
+    - When `storage_type == "ram"`: stores segments in RAM.
+    - If `target_url` is currently being pre-fetched in the background: awaits the in-flight task
+      instead of opening a duplicate network connection!
+    """
+    import hashlib
+
+    cached = state.hls_segment_cache.get(target_url)
+    if cached is not None:
+        if isinstance(cached, dict) and cached.get("storage") == "disk":
+            seg_p = Path(cached.get("path") or "")
+            if seg_p.exists():
+                state.hls_segment_cache.move_to_end(target_url)
+                if is_prefetch:
+                    return 200, b""
+                state.hls_cache_hits += 1
+                data = await asyncio.to_thread(_read_and_optional_delete_sync, seg_p, False)
+                return 200, data
+            else:
+                # File was externally removed; clean up stale entry
+                old_e = state.hls_segment_cache.pop(target_url, None)
+                if old_e:
+                    state.hls_cache_bytes = max(0, state.hls_cache_bytes - int(old_e.get("size") or 0))
+        elif isinstance(cached, dict) and cached.get("storage") == "ram":
+            state.hls_segment_cache.move_to_end(target_url)
+            if not is_prefetch:
+                state.hls_cache_hits += 1
+            return 200, cached.get("data") or b""
+
+    if not is_prefetch:
+        state.hls_cache_misses += 1
+
+    inflight = state.hls_inflight_tasks.get(target_url)
+    if inflight is not None and not inflight.done():
+        try:
+            return await asyncio.shield(inflight)
+        except Exception:
+            pass
+
+    task = asyncio.create_task(_download_and_clean_segment(target_url, dict(req_headers)))
+    state.hls_inflight_tasks[target_url] = task
+    try:
+        status_code, clean_bytes = await asyncio.shield(task)
+        if (
+            status_code == 200
+            and len(clean_bytes) > 188
+            and state.buffer_config.get("enabled", True)
+        ):
+            if target_url in state.hls_segment_cache:
+                old_e = state.hls_segment_cache.pop(target_url)
+                old_sz = int(old_e.get("size") or 0) if isinstance(old_e, dict) else len(old_e[0])
+                state.hls_cache_bytes = max(0, state.hls_cache_bytes - old_sz)
+                if isinstance(old_e, dict) and old_e.get("path"):
+                    try:
+                        Path(old_e["path"]).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+            use_disk = state.buffer_config.get("storage_type", "disk") == "disk"
+            seg_size = len(clean_bytes)
+            if use_disk:
+                seg_hash = hashlib.sha1(target_url.encode("utf-8")).hexdigest()
+                seg_path = state.ensure_disk_cache_dir() / f"seg_{seg_hash}.ts"
+                await asyncio.to_thread(_write_bytes_to_file_sync, seg_path, clean_bytes)
+                state.hls_segment_cache[target_url] = {
+                    "storage": "disk",
+                    "path": str(seg_path),
+                    "size": seg_size,
+                    "ts": time.time(),
+                }
+            else:
+                state.hls_segment_cache[target_url] = {
+                    "storage": "ram",
+                    "data": clean_bytes,
+                    "size": seg_size,
+                    "ts": time.time(),
+                }
+
+            state.hls_cache_bytes += seg_size
+            _evict_hls_cache_if_needed()
+            if is_prefetch:
+                state.hls_prefetched_count += 1
+                if use_disk:
+                    # Drop reference to clean_bytes immediately on prefetch so RAM stays 0MB!
+                    return status_code, b""
+        return status_code, clean_bytes
+    finally:
+        if state.hls_inflight_tasks.get(target_url) is task:
+            state.hls_inflight_tasks.pop(target_url, None)
+
+
+async def _prefetch_single_segment_bg(seg_url: str, req_headers: Dict[str, str]):
+    if not state.buffer_config.get("enabled", True):
+        return
+    if seg_url in state.hls_segment_cache or seg_url in state.hls_inflight_tasks:
+        return
+    try:
+        async with state.hls_prefetch_sem:
+            if seg_url in state.hls_segment_cache or seg_url in state.hls_inflight_tasks:
+                return
+            await get_or_fetch_hls_segment(seg_url, req_headers, is_prefetch=True)
+    except Exception:
+        pass
+
+
+def trigger_hls_readahead(current_url: str):
+    """
+    When the TV requests segment N, immediately spawns parallel background tasks
+    to download segments N+1 .. N+K into RAM before the TV needs them!
+    """
+    if not state.buffer_config.get("enabled", True):
+        return
+    prefetch_count = int(state.buffer_config.get("prefetch_segments") or 0)
+    if prefetch_count <= 0:
+        return
+    nxt_info = state.hls_next_map.get(current_url)
+    if not nxt_info:
+        return
+    next_urls = (nxt_info.get("next_urls") or [])[:prefetch_count]
+    hdrs = nxt_info.get("headers") or {}
+    for u in next_urls:
+        if u not in state.hls_segment_cache and u not in state.hls_inflight_tasks:
+            asyncio.create_task(_prefetch_single_segment_bg(u, hdrs))
+
+
 def rewrite_m3u8_content(content: str, base_url: str, headers: Dict[str, str], host_base: str) -> str:
     lines = content.splitlines()
     out_lines = []
     expect_variant_m3u8 = False
+    media_segments: List[Tuple[str, float]] = []
+    pending_extinf_dur = 4.0
 
     def replace_uri_attr(match):
         uri = match.group(1)
@@ -760,6 +1322,13 @@ def rewrite_m3u8_content(content: str, base_url: str, headers: Dict[str, str], h
         if stripped.startswith("#"):
             if stripped.startswith("#EXT-X-STREAM-INF"):
                 expect_variant_m3u8 = True
+            elif stripped.startswith("#EXTINF:"):
+                m_dur = re.search(r"#EXTINF:\s*([\d.]+)", stripped)
+                if m_dur:
+                    try:
+                        pending_extinf_dur = max(0.5, float(m_dur.group(1)))
+                    except Exception:
+                        pending_extinf_dur = 4.0
             if 'URI="' in stripped:
                 line = re.sub(r'URI="([^"]+)"', replace_uri_attr, line)
             out_lines.append(line)
@@ -768,6 +1337,9 @@ def rewrite_m3u8_content(content: str, base_url: str, headers: Dict[str, str], h
             low_abs = abs_url.lower().split("?")[0]
             is_sub_m3u8 = expect_variant_m3u8 or low_abs.endswith(".m3u8") or low_abs.endswith(".m3u")
             expect_variant_m3u8 = False
+            if not is_sub_m3u8:
+                media_segments.append((abs_url, pending_extinf_dur))
+                pending_extinf_dur = 4.0
             out_lines.append(
                 build_proxy_url(
                     abs_url,
@@ -778,15 +1350,58 @@ def rewrite_m3u8_content(content: str, base_url: str, headers: Dict[str, str], h
                 )
             )
 
+    # Register segment adjacency graph (`state.hls_next_map`) for Smart Read-Ahead Pre-fetching!
+    if media_segments:
+        seg_req_headers = {
+            "User-Agent": headers.get(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            ),
+            "Accept": "*/*",
+        }
+        for k, v in (headers or {}).items():
+            if v:
+                seg_req_headers[k] = v
+        if "Referer" in seg_req_headers and "Origin" not in seg_req_headers:
+            parsed_ref = urllib.parse.urlparse(seg_req_headers["Referer"])
+            if parsed_ref.scheme and parsed_ref.netloc:
+                seg_req_headers["Origin"] = f"{parsed_ref.scheme}://{parsed_ref.netloc}"
+
+        seg_urls = [u for (u, _) in media_segments]
+        if len(state.hls_next_map) > 5000:
+            state.hls_next_map.clear()
+        for idx, s_url in enumerate(seg_urls):
+            state.hls_next_map[s_url] = {
+                "next_urls": seg_urls[idx + 1 : idx + 1 + 25],
+                "headers": seg_req_headers,
+            }
+
+        # Warm up initial segments around current playback position immediately!
+        if state.buffer_config.get("enabled", True):
+            target_time = max(0.0, float(state.current_media.get("currentTime") or 0.0))
+            start_idx = 0
+            if target_time > 5.0:
+                acc_t = 0.0
+                for idx, (_, dur_s) in enumerate(media_segments):
+                    if acc_t + dur_s >= target_time:
+                        start_idx = max(0, idx - 1)
+                        break
+                    acc_t += dur_s
+            warm_count = min(len(seg_urls) - start_idx, max(3, int(state.buffer_config.get("prefetch_segments", 8)) // 2))
+            for u in seg_urls[start_idx : start_idx + warm_count]:
+                if u not in state.hls_segment_cache and u not in state.hls_inflight_tasks:
+                    asyncio.create_task(_prefetch_single_segment_bg(u, seg_req_headers))
+
     return "\n".join(out_lines)
 
 
 @app.get("/proxy/segment.ts")
 async def proxy_hls_segment(request: Request, token: str):
     """
-    Dedicated, zero-crash HLS segment proxy (.ts / .m4s / disguised .png/.jpg/.html segments).
-    Reads the segment cleanly, strips any anti-leech PNG/JPG header before 0x47, and returns
-    an exact Content-Length Response so Uvicorn NEVER throws 'Response content shorter than Content-Length'!
+    Smart RAM-Cached + Read-Ahead Pre-fetched HLS Segment Proxy (.ts / .m4s / disguised .png/.jpg/.html).
+    - Serves immediately from RAM if already pre-fetched (0ms latency!).
+    - Triggers parallel read-ahead of the next N segments (`state.buffer_config["prefetch_segments"]`).
+    - Strips any anti-leech PNG/JPG header before 0x47 and returns exact Content-Length.
     """
     target_url, custom_headers = decode_proxy_params(token)
     req_headers = {
@@ -805,19 +1420,46 @@ async def proxy_hls_segment(request: Request, token: str):
         if parsed_ref.scheme and parsed_ref.netloc:
             req_headers["Origin"] = f"{parsed_ref.scheme}://{parsed_ref.netloc}"
 
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=httpx.Timeout(25.0, connect=8.0)) as client:
-        resp = await client.get(target_url, headers=req_headers)
-        raw_bytes = resp.content
+    # Immediately trigger parallel read-ahead pre-fetching for upcoming segments!
+    trigger_hls_readahead(target_url)
 
-    clean_bytes = strip_disguised_mpegts_header(raw_bytes)
+    status_code, clean_bytes = await get_or_fetch_hls_segment(target_url, req_headers, is_prefetch=False)
     return Response(
         content=clean_bytes,
-        status_code=200 if resp.status_code in (200, 206) else resp.status_code,
+        status_code=status_code,
         media_type="video/mp2t",
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Private-Network": "true",
             "Content-Length": str(len(clean_bytes)),
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+@app.api_route("/proxy/virtual/{vid_id}.m3u8", methods=["GET", "HEAD"])
+async def serve_virtual_m3u8(vid_id: str, request: Request):
+    """
+    Serves a decrypted in-memory #EXTM3U playlist (e.g. from streamfree.vip / hhpanda.st AES-GCM + PNG-prefixed segments)
+    and rewrites all segment URLs through `/proxy/segment.ts` so the Smart TV receives 100% pure, unencrypted MPEG-TS!
+    """
+    v_item = state.virtual_m3u8_store.get(vid_id)
+    if not v_item:
+        raise HTTPException(status_code=404, detail="Virtual M3U8 not found or expired")
+    host_base = f"http://{request.url.hostname or get_local_ip()}:{PORT}"
+    rewritten = rewrite_m3u8_content(
+        v_item["m3u8_text"],
+        v_item["base_url"],
+        v_item.get("headers") or {},
+        host_base,
+    )
+    return Response(
+        content=rewritten.encode("utf-8"),
+        media_type="application/vnd.apple.mpegurl",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Private-Network": "true",
+            "Cache-Control": "no-cache",
         },
     )
 
@@ -873,6 +1515,7 @@ async def proxy_stream(
         or url_path.endswith(".m3u8")
         or url_path.endswith(".m3u")
         or ".m3u8" in target_url.lower()
+        or "/eyj0ijoi" in url_path
     )
 
     if is_m3u8_request:
@@ -880,15 +1523,13 @@ async def proxy_stream(
             parsed_ref = urllib.parse.urlparse(req_headers["Referer"])
             if parsed_ref.scheme and parsed_ref.netloc:
                 req_headers["Origin"] = f"{parsed_ref.scheme}://{parsed_ref.netloc}"
-        async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=httpx.Timeout(20.0, connect=8.0)) as client:
-            try:
-                resp = await client.get(target_url, headers=req_headers)
-            except Exception as e:
-                raise HTTPException(status_code=502, detail=f"Upstream M3U8 fetch error: {e}")
+        try:
+            _, _, raw_bytes, final_url = await fetch_url_universal(target_url, headers=req_headers, timeout=20.0)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Upstream M3U8 fetch error: {e}")
 
-        raw_bytes = resp.content
-        final_url = str(resp.url)
         text = raw_bytes.decode("utf-8", errors="replace")
+        text = decrypt_enc_aesgcm_m3u8_if_needed(text, final_url, req_headers.get("Referer", ""))
         if text.lstrip().startswith("#EXTM3U"):
             rewritten = rewrite_m3u8_content(text, final_url, custom_headers, host_base)
             encoded_m3u8 = rewritten.encode("utf-8")
@@ -912,9 +1553,7 @@ async def proxy_stream(
             },
         )
 
-    # Special Bounded-Chunk Streaming Engine for YouTube googlevideo.com!
-    # YouTube's googlevideo.com (c=ANDROID_VR) rejects open-ended `Range: bytes=0-` or un-ranged GETs with 403 Forbidden,
-    # and strictly requires bounded byte-range requests (`Range: bytes=START-END`).
+    # Special Bounded-Chunk Streaming Engine + Read-Ahead RAM Queue for YouTube googlevideo.com!
     if "googlevideo.com/" in target_url.lower():
         client_range_hdr = request.headers.get("range") or ""
         start_byte = 0
@@ -935,15 +1574,13 @@ async def proxy_stream(
         yt_headers["Accept-Encoding"] = "identity"
         yt_headers["Range"] = f"bytes={start_byte}-{first_end}"
 
-        client = httpx.AsyncClient(verify=False, follow_redirects=True, timeout=httpx.Timeout(30.0, connect=10.0))
+        shared_client = await get_shared_http_client()
         try:
-            r_first = await client.get(target_url, headers=yt_headers)
+            r_first = await shared_client.get(target_url, headers=yt_headers, timeout=httpx.Timeout(25.0, connect=8.0))
         except Exception as e:
-            await client.aclose()
             raise HTTPException(status_code=502, detail=f"YouTube upstream error: {e}")
 
         if r_first.status_code not in (200, 206):
-            await client.aclose()
             raise HTTPException(status_code=r_first.status_code, detail="YouTube upstream returned error")
 
         first_bytes = r_first.content
@@ -966,26 +1603,86 @@ async def proxy_stream(
             resp_headers["Content-Range"] = f"bytes {start_byte}-{final_end}/{total_size}"
 
         if request.method == "HEAD":
-            await client.aclose()
             return Response(content=b"", status_code=out_status, headers=resp_headers, media_type=media_type_yt)
 
+        step_size = 3 * 1024 * 1024  # 3MB chunks
+        readahead_mb = max(8, int(state.buffer_config.get("mp4_readahead_mb") or 48))
+        max_q_items = max(2, readahead_mb // 3)
+        use_disk_yt = state.buffer_config.get("storage_type", "disk") == "disk"
+        disk_cache_dir_yt = state.ensure_disk_cache_dir() if use_disk_yt else None
+
         async def iter_yt_bounded_chunks():
+            q: asyncio.Queue = asyncio.Queue(maxsize=max_q_items)
+            stop_evt = asyncio.Event()
+
+            async def _yt_producer():
+                cur_pos = start_byte + len(first_bytes)
+                try:
+                    while cur_pos <= final_end and not stop_evt.is_set():
+                        c_end = min(cur_pos + step_size - 1, final_end)
+                        h_chunk = dict(req_headers)
+                        h_chunk["Accept-Encoding"] = "identity"
+                        h_chunk["Range"] = f"bytes={cur_pos}-{c_end}"
+                        chunk_data = b""
+                        for attempt in range(3):
+                            try:
+                                r_chunk = await shared_client.get(
+                                    target_url,
+                                    headers=h_chunk,
+                                    timeout=httpx.Timeout(25.0, connect=8.0),
+                                )
+                                if r_chunk.status_code in (200, 206) and r_chunk.content:
+                                    chunk_data = r_chunk.content
+                                    break
+                            except Exception:
+                                pass
+                            await asyncio.sleep(0.35 * (attempt + 1))
+                        if not chunk_data:
+                            break
+                        c_len = len(chunk_data)
+                        state.mp4_buffered_bytes += c_len
+                        if use_disk_yt and disk_cache_dir_yt is not None:
+                            chunk_file = disk_cache_dir_yt / f"mp4chunk_yt_{uuid.uuid4().hex[:12]}.bin"
+                            await asyncio.to_thread(_write_bytes_to_file_sync, chunk_file, chunk_data)
+                            chunk_data = b""  # Free RAM immediately
+                            await q.put(("disk", chunk_file, c_len))
+                        else:
+                            await q.put(("ram", chunk_data, c_len))
+                        cur_pos += c_len
+                finally:
+                    await q.put(None)
+
+            prod_task = asyncio.create_task(_yt_producer())
             try:
                 yield first_bytes
-                cur_pos = start_byte + len(first_bytes)
-                step_size = 4 * 1024 * 1024  # 4MB subsequent chunks
-                while cur_pos <= final_end:
-                    c_end = min(cur_pos + step_size - 1, final_end)
-                    h_chunk = dict(req_headers)
-                    h_chunk["Accept-Encoding"] = "identity"
-                    h_chunk["Range"] = f"bytes={cur_pos}-{c_end}"
-                    r_chunk = await client.get(target_url, headers=h_chunk)
-                    if r_chunk.status_code not in (200, 206) or not r_chunk.content:
+                while True:
+                    item = await q.get()
+                    if item is None:
                         break
-                    yield r_chunk.content
-                    cur_pos += len(r_chunk.content)
+                    kind, payload_item, c_len = item
+                    state.mp4_buffered_bytes = max(0, state.mp4_buffered_bytes - c_len)
+                    if kind == "disk":
+                        data_out = await asyncio.to_thread(_read_and_optional_delete_sync, payload_item, True)
+                        yield data_out
+                    else:
+                        yield payload_item
             finally:
-                await client.aclose()
+                stop_evt.set()
+                if not prod_task.done():
+                    prod_task.cancel()
+                while not q.empty():
+                    try:
+                        leftover = q.get_nowait()
+                        if leftover:
+                            l_kind, l_payload, l_len = leftover
+                            state.mp4_buffered_bytes = max(0, state.mp4_buffered_bytes - l_len)
+                            if l_kind == "disk" and isinstance(l_payload, Path):
+                                try:
+                                    l_payload.unlink(missing_ok=True)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        break
 
         return StreamingResponse(
             iter_yt_bounded_chunks(),
@@ -994,20 +1691,25 @@ async def proxy_stream(
             media_type=media_type_yt,
         )
 
-    # Direct MP4 / MKV / WebM / Extensionless Sora streaming with Byte-Range support
-    if "range" in request.headers:
-        req_headers["Range"] = request.headers["range"]
+    # Direct MP4 / MKV / WebM / Extensionless Sora streaming with Read-Ahead RAM Buffer & Auto-Resume!
+    client_range_hdr = request.headers.get("range") or ""
+    start_byte_mp4 = 0
+    end_byte_mp4: Optional[int] = None
+    if client_range_hdr:
+        req_headers["Range"] = client_range_hdr
+        m_r = re.search(r"bytes=(\d+)-(\d*)", client_range_hdr)
+        if m_r:
+            start_byte_mp4 = int(m_r.group(1))
+            if m_r.group(2):
+                end_byte_mp4 = int(m_r.group(2))
     elif "/sora/" in target_url or "sssrr.org" in target_url or "trycloudflare.com" in target_url:
-        # Hydrax / Abyss / Sora servers return 404 Not Found if Range header is omitted!
         req_headers["Range"] = "bytes=0-"
-    # Disable gzip/br compression on binary streams so Content-Length never mismatches!
     req_headers["Accept-Encoding"] = "identity"
 
     client = httpx.AsyncClient(verify=False, follow_redirects=True, timeout=httpx.Timeout(60.0, connect=10.0))
     try:
         upstream_req = client.build_request("GET", target_url, headers=req_headers)
         upstream_resp = await client.send(upstream_req, stream=True)
-        # Universal fallback: if an upstream video CDN returns 403/404 when no Range header was sent, retry with Range: bytes=0-
         if upstream_resp.status_code in (403, 404) and "Range" not in req_headers:
             await upstream_resp.aclose()
             req_headers["Range"] = "bytes=0-"
@@ -1016,14 +1718,6 @@ async def proxy_stream(
     except Exception as e:
         await client.aclose()
         raise HTTPException(status_code=502, detail=f"Upstream stream error: {e}")
-
-    async def iter_upstream():
-        try:
-            async for chunk in upstream_resp.aiter_raw(chunk_size=65536):
-                yield chunk
-        finally:
-            await upstream_resp.aclose()
-            await client.aclose()
 
     resp_headers = {
         "Access-Control-Allow-Origin": "*",
@@ -1047,6 +1741,116 @@ async def proxy_stream(
         await client.aclose()
         return Response(content=b"", status_code=out_status, headers=resp_headers, media_type=media_type_out)
 
+    # Calculate max queue depth for MP4 stream (512KB chunks on disk, 128KB in RAM)
+    readahead_mb = max(4, int(state.buffer_config.get("mp4_readahead_mb") or 48))
+    use_disk_mp4 = state.buffer_config.get("storage_type", "disk") == "disk"
+    chunk_sz_mp4 = 524288 if use_disk_mp4 else 131072
+    max_mp4_chunks = max(16, (readahead_mb * 1024 * 1024) // chunk_sz_mp4)
+    expected_len = int(upstream_resp.headers.get("content-length") or 0)
+    disk_cache_dir = state.ensure_disk_cache_dir() if use_disk_mp4 else None
+
+    async def iter_upstream():
+        q: asyncio.Queue = asyncio.Queue(maxsize=max_mp4_chunks)
+        stop_evt = asyncio.Event()
+        mp4_stream_id = uuid.uuid4().hex[:8]
+        chunk_idx = 0
+
+        async def _mp4_producer():
+            nonlocal upstream_resp, chunk_idx
+            bytes_read = 0
+            retries = 0
+            try:
+                while not stop_evt.is_set():
+                    try:
+                        async for chunk in upstream_resp.aiter_raw(chunk_size=chunk_sz_mp4):
+                            if stop_evt.is_set():
+                                break
+                            if not chunk:
+                                continue
+                            c_len = len(chunk)
+                            bytes_read += c_len
+                            state.mp4_buffered_bytes += c_len
+                            if use_disk_mp4 and disk_cache_dir is not None:
+                                chunk_idx += 1
+                                c_file = disk_cache_dir / f"mp4chunk_{mp4_stream_id}_{chunk_idx}.bin"
+                                try:
+                                    await asyncio.to_thread(_write_bytes_to_file_sync, c_file, chunk)
+                                    await q.put(("disk", c_file, c_len))
+                                except Exception:
+                                    await q.put(("ram", chunk, c_len))
+                            else:
+                                await q.put(("ram", chunk, c_len))
+                        break  # Clean EOF
+                    except Exception:
+                        # Mid-stream network drop! Auto-reconnect using Range header if possible
+                        retries += 1
+                        if retries > 5 or (expected_len > 0 and bytes_read >= expected_len):
+                            break
+                        try:
+                            await upstream_resp.aclose()
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.5 * retries)
+                        resume_offset = start_byte_mp4 + bytes_read
+                        resume_hdrs = dict(req_headers)
+                        resume_hdrs["Range"] = (
+                            f"bytes={resume_offset}-{end_byte_mp4}"
+                            if end_byte_mp4 is not None
+                            else f"bytes={resume_offset}-"
+                        )
+                        try:
+                            req_retry = client.build_request("GET", target_url, headers=resume_hdrs)
+                            resp_retry = await client.send(req_retry, stream=True)
+                            if resp_retry.status_code == 206:
+                                upstream_resp = resp_retry
+                                continue
+                            await resp_retry.aclose()
+                        except Exception:
+                            pass
+                        break
+            finally:
+                await q.put(None)
+                try:
+                    await upstream_resp.aclose()
+                except Exception:
+                    pass
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
+
+        prod_task = asyncio.create_task(_mp4_producer())
+        try:
+            while True:
+                item = await q.get()
+                if item is None:
+                    break
+                item_kind, item_payload, item_len = item
+                state.mp4_buffered_bytes = max(0, state.mp4_buffered_bytes - item_len)
+                if item_kind == "disk":
+                    data_bytes = await asyncio.to_thread(_read_and_optional_delete_sync, item_payload, True)
+                    if data_bytes:
+                        yield data_bytes
+                else:
+                    yield item_payload
+        finally:
+            stop_evt.set()
+            if not prod_task.done():
+                prod_task.cancel()
+            while not q.empty():
+                try:
+                    leftover = q.get_nowait()
+                    if leftover:
+                        l_kind, l_payload, l_len = leftover
+                        state.mp4_buffered_bytes = max(0, state.mp4_buffered_bytes - l_len)
+                        if l_kind == "disk":
+                            try:
+                                l_payload.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    break
+
     return StreamingResponse(
         iter_upstream(),
         status_code=out_status,
@@ -1055,28 +1859,179 @@ async def proxy_stream(
     )
 
 
+def _decode_subtitle_bytes(raw_bytes: bytes) -> str:
+    if not raw_bytes:
+        return ""
+    for enc in ("utf-8-sig", "utf-16", "cp1258", "windows-1252"):
+        try:
+            return raw_bytes.decode(enc)
+        except Exception:
+            continue
+    return raw_bytes.decode("utf-8", errors="replace")
+
+
+def _parse_vtt_ts_to_sec(ts_str: str) -> float:
+    s = ts_str.strip().replace(",", ".")
+    parts = s.split(":")
+    try:
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+    except Exception:
+        pass
+    return 0.0
+
+
+def _format_sec_to_vtt_ts(sec: float) -> str:
+    sec = max(0.0, float(sec))
+    total_ms = int(round(sec * 1000))
+    hrs = total_ms // 3600000
+    rem = total_ms % 3600000
+    mins = rem // 60000
+    rem = rem % 60000
+    secs = rem // 1000
+    ms = rem % 1000
+    return f"{hrs:02d}:{mins:02d}:{secs:02d}.{ms:03d}"
+
+
+def _convert_ass_to_vtt(text: str) -> str:
+    lines = text.splitlines()
+    in_events = False
+    format_cols: List[str] = []
+    cues: List[Tuple[float, float, str]] = []
+    for ln in lines:
+        s = ln.strip()
+        if s.lower() == "[events]":
+            in_events = True
+            continue
+        if in_events and s.startswith("[") and s.endswith("]"):
+            break
+        if not in_events:
+            continue
+        if s.lower().startswith("format:"):
+            format_cols = [c.strip().lower() for c in s.split(":", 1)[1].split(",")]
+        elif s.lower().startswith("dialogue:"):
+            payload = s.split(":", 1)[1].lstrip()
+            max_splits = max(9, len(format_cols) - 1) if format_cols else 9
+            parts = payload.split(",", max_splits)
+            if len(parts) < 4:
+                continue
+            start_idx = format_cols.index("start") if "start" in format_cols else 1
+            end_idx = format_cols.index("end") if "end" in format_cols else 2
+            text_idx = format_cols.index("text") if "text" in format_cols else len(parts) - 1
+            if max(start_idx, end_idx, text_idx) >= len(parts):
+                continue
+            st_sec = _parse_vtt_ts_to_sec(parts[start_idx])
+            en_sec = _parse_vtt_ts_to_sec(parts[end_idx])
+            raw_txt = parts[text_idx]
+            clean_txt = re.sub(r"\{[^}]*\}", "", raw_txt)
+            clean_txt = clean_txt.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ").strip()
+            if clean_txt and en_sec > st_sec:
+                cues.append((st_sec, en_sec, clean_txt))
+
+    cues.sort(key=lambda x: x[0])
+    out = ["WEBVTT", ""]
+    for idx, (st_s, en_s, c_txt) in enumerate(cues, 1):
+        out.append(str(idx))
+        out.append(f"{_format_sec_to_vtt_ts(st_s)} --> {_format_sec_to_vtt_ts(en_s)}")
+        out.append(c_txt)
+        out.append("")
+    return "\n".join(out)
+
+
+def convert_and_style_subtitle_to_vtt(raw_bytes: bytes) -> str:
+    """
+    Universal Subtitle Normalizer & Live Styler (.SRT / .VTT / .ASS / .SSA -> UTF-8 WEBVTT):
+    1. Auto-detects UTF-8 / UTF-16 / CP1258 Vietnamese encoding.
+    2. Converts .ASS/.SSA or .SRT into clean WebVTT.
+    3. Applies live `offsetSec` (+/- seconds subtitle sync) and `bottomPosition` (`line:XX%`)
+       directly to cue timestamps so both Native WVC Receiver (`cast2tv.app`) AND Web TV (`/tv`)
+       respect timing offset and vertical position immediately!
+    """
+    text = _decode_subtitle_bytes(raw_bytes).lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    if not text.strip():
+        return "WEBVTT\n\n"
+
+    if "[events]" in text.lower() and "dialogue:" in text.lower():
+        text = _convert_ass_to_vtt(text)
+    else:
+        # Convert SRT comma timestamps (00:01:02,345 or 01:02,345) to VTT dot timestamps
+        text = re.sub(r"(\d{1,2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", text)
+        text = re.sub(r"(?<!\d:)(\d{2}:\d{2}),(\d{3})", r"00:\1.\2", text)
+        if not text.lstrip().startswith("WEBVTT"):
+            text = "WEBVTT\n\n" + text.lstrip()
+
+    offset_sec = float(state.subtitle_style.get("offsetSec") or 0.0)
+    bottom_pos = int(state.subtitle_style.get("bottomPosition") or 8)
+    # In WebVTT & WVC SubtitleParser.ts, line:90% means 90% from top (10% from bottom)
+    vtt_line_pct = max(10, min(95, 100 - bottom_pos))
+
+    ts_line_re = re.compile(
+        r"^(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})(.*)$"
+    )
+    out_lines = []
+    for ln in text.split("\n"):
+        m = ts_line_re.match(ln.strip())
+        if m:
+            st_s = _parse_vtt_ts_to_sec(m.group(1)) + offset_sec
+            en_s = _parse_vtt_ts_to_sec(m.group(2)) + offset_sec
+            rest = m.group(3) or ""
+            if en_s <= 0:
+                st_s, en_s = 0.0, 0.001
+            else:
+                st_s = max(0.0, st_s)
+            if "line:" not in rest:
+                rest = (rest.rstrip() + f" line:{vtt_line_pct}%")
+            out_lines.append(f"{_format_sec_to_vtt_ts(st_s)} --> {_format_sec_to_vtt_ts(en_s)}{rest}")
+        else:
+            out_lines.append(ln)
+
+    return "\n".join(out_lines)
+
+
 @app.get("/proxy/subtitle.vtt")
 @app.get("/proxy/subtitle")
-async def proxy_subtitle(url: str, referer: Optional[str] = None):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36"
-    }
-    if referer:
-        headers["Referer"] = referer
-    async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=15.0) as client:
-        r = await client.get(url, headers=headers)
-        text = r.text.lstrip("\ufeff")
+async def proxy_subtitle(
+    url: Optional[str] = None,
+    id: Optional[str] = None,
+    referer: Optional[str] = None,
+):
+    raw_bytes = b""
+    if id:
+        sub_item = state.uploaded_subtitles.get(id)
+        if not sub_item:
+            raise HTTPException(status_code=404, detail="Không tìm thấy phụ đề đã tải lên!")
+        if sub_item.get("file_path") and Path(sub_item["file_path"]).exists():
+            raw_bytes = Path(sub_item["file_path"]).read_bytes()
+        else:
+            raw_bytes = (sub_item.get("content") or "").encode("utf-8")
+    elif url:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        }
+        if referer:
+            headers["Referer"] = referer
+        try:
+            client = await get_shared_http_client()
+            r = await client.get(url, headers=headers, timeout=15.0)
+            raw_bytes = r.content
+        except Exception:
+            try:
+                _, _, raw_bytes, _ = await fetch_url_universal(url, headers=headers, timeout=15.0)
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Lỗi tải phụ đề: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Thiếu url hoặc id phụ đề")
 
-    if not text.startswith("WEBVTT"):
-        vtt_body = re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", text)
-        text = "WEBVTT\n\n" + vtt_body
-
+    vtt_text = convert_and_style_subtitle_to_vtt(raw_bytes)
     return Response(
-        content=text,
+        content=vtt_text.encode("utf-8"),
         media_type="text/vtt; charset=utf-8",
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Private-Network": "true",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
         },
     )
 
@@ -1114,11 +2069,38 @@ async def register_local_file(payload: Dict[str, Any]):
     local_ip = get_local_ip()
     stream_url = f"http://{local_ip}:{PORT}/stream/local/{file_id}/video.mp4"
 
+    # Auto-discover companion subtitle files (.srt / .vtt / .ass / .ssa) in the same folder!
+    companion_subs: List[Dict[str, str]] = []
+    try:
+        stem_low = file_path.stem.lower()
+        sub_exts = {".srt", ".vtt", ".ass", ".ssa"}
+        for cand in sorted(file_path.parent.iterdir()):
+            if not cand.is_file() or cand.suffix.lower() not in sub_exts:
+                continue
+            cand_stem = cand.stem.lower()
+            if cand_stem == stem_low or cand_stem.startswith(stem_low + ".") or cand_stem.startswith(stem_low + "_"):
+                sub_id = f"local_{uuid.uuid4().hex[:8]}"
+                state.uploaded_subtitles[sub_id] = {
+                    "id": sub_id,
+                    "label": f"Phụ đề đi kèm ({cand.name})",
+                    "file_path": str(cand),
+                    "created_at": time.time(),
+                }
+                sub_url = f"http://{local_ip}:{PORT}/proxy/subtitle.vtt?id={sub_id}"
+                companion_subs.append({
+                    "id": sub_id,
+                    "label": f"Phụ đề ({cand.name})",
+                    "url": sub_url,
+                })
+    except Exception:
+        pass
+
     return {
         "file_id": file_id,
         "name": file_path.name,
         "size": file_path.stat().st_size,
         "stream_url": stream_url,
+        "subtitles": companion_subs,
     }
 
 
@@ -1519,7 +2501,7 @@ def unwrap_and_clean_stream_url(raw_url: str) -> Tuple[Optional[str], Dict[str, 
 
 def detect_stream_type(url: str) -> str:
     u = url.lower().split("?")[0]
-    if ".m3u8" in url.lower() or u.endswith(".m3u"):
+    if ".m3u8" in url.lower() or u.endswith(".m3u") or "/eyj0ijoi" in u:
         return "hls"
     if ".mpd" in url.lower():
         return "dash"
@@ -1553,7 +2535,19 @@ def _probe_bytes_with_pyav(raw_bytes: bytes) -> Dict[str, Any]:
             v_stream = next((s for s in container.streams if s.type == "video"), None)
             a_stream = next((s for s in container.streams if s.type == "audio"), None)
             if v_stream:
-                if v_stream.width and v_stream.height:
+                if not v_stream.width or not v_stream.height:
+                    try:
+                        for idx, pkt in enumerate(container.demux(v_stream)):
+                            for frame in pkt.decode():
+                                if frame.width and frame.height:
+                                    info["width"] = int(frame.width)
+                                    info["height"] = int(frame.height)
+                                    break
+                            if info.get("width") or idx >= 5:
+                                break
+                    except Exception:
+                        pass
+                if v_stream.width and v_stream.height and not info.get("width"):
                     info["width"] = int(v_stream.width)
                     info["height"] = int(v_stream.height)
                 if v_stream.codec_context and v_stream.codec_context.name:
@@ -1612,9 +2606,9 @@ async def probe_stream_metadata(
     try:
         async with httpx.AsyncClient(verify=False, follow_redirects=True, timeout=httpx.Timeout(10.0, connect=5.0)) as client:
             if stream_type == "hls":
-                r = await client.get(url, headers=req_headers)
-                text = r.text
-                final_url = str(r.url)
+                _, _, raw_m3u8_bytes, final_url = await fetch_url_universal(url, headers=req_headers, timeout=10.0)
+                text = raw_m3u8_bytes.decode("utf-8", errors="replace")
+                text = decrypt_enc_aesgcm_m3u8_if_needed(text, final_url, req_headers.get("Referer", ""))
 
                 if "#EXT-X-STREAM-INF" in text:
                     meta["variant_type"] = "Master Playlist"
@@ -1869,9 +2863,13 @@ async def inspect_embed_player_url(embed_url: str, parent_referer: str, server_l
                         subs.append(s)
                 js_iframes.extend(sub_js)
 
-        # 6. If this embed page uses encrypted JS player initialization (like Abyss `SoTrym` / `jwplayer` / `eval(function(p,a,c,k,e,d))`)
+        # 6. If this embed page uses encrypted JS player initialization (like Abyss `SoTrym` / `jwplayer` / `streamfree.vip` `#app` / `eval(function(p,a,c,k,e,d))`)
         #    and didn't yield direct static URLs yet, queue it as a direct Playwright JS target!
-        if not streams and any(kw in html for kw in ("SoTrym", "jwplayer", "videojs", "Artplayer", "DPlayer", "Clappr", "eval(function")):
+        if not streams and (
+            any(kw in html for kw in ("SoTrym", "jwplayer", "videojs", "Artplayer", "DPlayer", "Clappr", "eval(function", 'id="app"'))
+            or "streamfree" in final_embed.lower()
+            or "/embed/" in final_embed.lower()
+        ):
             js_iframes.append((final_embed, parent_referer, server_label or "Embed Player"))
 
     except Exception as e:
@@ -1956,12 +2954,66 @@ async def sniff_with_html_and_nextjs(url: str) -> Tuple[List[Dict[str, Any]], Li
         raw_ifr = ifr_m.group(1).strip()
         if not raw_ifr or raw_ifr.startswith("javascript:") or raw_ifr == "about:blank":
             continue
-        if any(bad in raw_ifr.lower() for bad in ("googletagmanager", "doubleclick", "facebook.com", "disqus")):
+        if any(bad in raw_ifr.lower() for bad in ("googletagmanager", "doubleclick", "facebook.com", "disqus", "darkbytes.xyz")):
             continue
         abs_ifr = urllib.parse.urljoin(final_url, raw_ifr).replace("/tvc?id=", "/play?id=")
         if abs_ifr not in seen_embeds:
             seen_embeds.add(abs_ifr)
             embed_tasks.append(inspect_embed_player_url(abs_ifr, final_url, "Main Player"))
+
+    # 2.5. Universal Halim / WordPress `dox_ajax_player` Unroller (e.g. hhpanda.st / halimthemes):
+    # Detects `<div id="halim-player-wrapper" data-post-id="59" data-ep="tap-164" data-sv="2">`
+    # and `.get-eps[data-type]` server tabs (PRO, VIP 4K, TIK, etc.)
+    halim_m = (
+        re.search(
+            r'id=["\']halim-player-wrapper["\'][^>]*data-post-id=["\'](\d+)["\'][^>]+data-ep=["\']([^"\']+)["\'][^>]+data-sv=["\'](\d+)["\']',
+            html,
+            re.I,
+        )
+        or re.search(
+            r'data-post-id=["\'](\d+)["\'][^>]+data-ep=["\']([^"\']+)["\'][^>]+data-sv=["\'](\d+)["\']',
+            html,
+            re.I,
+        )
+    )
+    if halim_m:
+        h_post_id, h_ep, h_sv = halim_m.group(1), halim_m.group(2), halim_m.group(3)
+        url_sv_m = re.search(r"/(tap-[^/]+?)-sv(\d+)\.html", final_url, re.I)
+        if url_sv_m:
+            h_ep, h_sv = url_sv_m.group(1), url_sv_m.group(2)
+        srv_types = []
+        for st_m in re.finditer(r'class=["\'][^"\']*get-eps[^"\']*["\'][^>]*data-type=["\']([^"\']+)["\'][^>]*>([^<]+)<', html, re.I):
+            t_code, t_label = st_m.group(1).strip(), st_m.group(2).strip()
+            if (t_code, t_label) not in srv_types:
+                srv_types.append((t_code, t_label))
+        if not srv_types:
+            srv_types = [("pro", "PRO"), ("vip4k", "VIP 4K"), ("tiktik", "TIK")]
+        else:
+            # Prioritize PRO (1080p) and VIP 4K (4K UHD) first
+            srv_types.sort(key=lambda x: 0 if x[0] == "pro" else (1 if x[0] == "vip4k" else 2))
+
+        async def _fetch_halim_ajax_server(t_code: str, t_label: str):
+            ajax_url = (
+                f"{ urllib.parse.urlparse(final_url).scheme }://{ urllib.parse.urlparse(final_url).netloc }"
+                f"/player/player.php?action=dox_ajax_player&post_id={h_post_id}&chapter_st={h_ep}&type={t_code}&sv={h_sv}"
+            )
+            try:
+                _, _, ajax_body, _ = await fetch_url_universal(
+                    ajax_url,
+                    headers={**headers, "X-Requested-With": "XMLHttpRequest"},
+                    timeout=10.0,
+                )
+                ajax_html = ajax_body.decode("utf-8", errors="replace").replace(r"\/", "/")
+                ifr_match = re.search(r'<iframe[^>]+src=["\']([^"\']+)["\']', ajax_html, re.I)
+                if ifr_match:
+                    ifr_src = urllib.parse.urljoin(final_url, ifr_match.group(1).strip())
+                    return await inspect_embed_player_url(ifr_src, final_url, f"Server {t_label}")
+            except Exception as e:
+                print(f"[HALIM AJAX WARN] {ajax_url}: {e}", flush=True)
+            return ([], [], [])
+
+        for t_code, t_label in srv_types[:2]:
+            embed_tasks.append(_fetch_halim_ajax_server(t_code, t_label))
 
     # 3. Extract Next.js episode objects:
     for ep_m in re.finditer(
@@ -2132,6 +3184,23 @@ def extract_episodes_universal(html: str, page_url: str) -> List[Dict[str, Any]]
                 "active": (u_path == cur_path) or ("active" in attrs.lower()),
             })
 
+    # Ensure matching server suffix if page_url has `-sv\d+\.html` (e.g. hhpanda.st `-sv1.html` vs `-sv2.html`)
+    sv_suffix_m = re.search(r"(-sv\d+\.html)$", cur_path, re.I)
+    if sv_suffix_m and len(episodes) > 1:
+        target_suffix = sv_suffix_m.group(1).lower()
+        filtered_sv = [e for e in episodes if e["url"].lower().endswith(target_suffix)]
+        if filtered_sv:
+            episodes = filtered_sv
+
+    # Sort descending episode lists (e.g. 164 -> 1 on hhpanda.st) into natural ascending order (1 -> 164)
+    if len(episodes) >= 2:
+        first_num_m = re.search(r"(\d+)", episodes[0]["label"])
+        last_num_m = re.search(r"(\d+)", episodes[-1]["label"])
+        if first_num_m and last_num_m and int(first_num_m.group(1)) > int(last_num_m.group(1)):
+            episodes.reverse()
+            for idx, ep in enumerate(episodes):
+                ep["index"] = idx
+
     # Ensure exactly one active episode if current URL matches
     if episodes and not any(e["active"] for e in episodes):
         for e in episodes:
@@ -2200,6 +3269,20 @@ def extract_youtube_watch_url(raw_url: str, page_url: str = "", referer: str = "
     return None
 
 
+class _SilentYtdlpLogger:
+    def debug(self, msg):
+        pass
+
+    def info(self, msg):
+        pass
+
+    def warning(self, msg):
+        pass
+
+    def error(self, msg):
+        pass
+
+
 async def sniff_with_ytdlp(url: str) -> List[Dict[str, Any]]:
     import yt_dlp
 
@@ -2207,6 +3290,7 @@ async def sniff_with_ytdlp(url: str) -> List[Dict[str, Any]]:
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
+            "logger": _SilentYtdlpLogger(),
             "skip_download": True,
             "noplaylist": True,
             "socket_timeout": 10,
@@ -2412,6 +3496,10 @@ WVC_UNIVERSAL_FRAME_HOOK_JS = """
                 }
             });
         });
+        // 6. Decrypted in-memory HLS playlist (e.g. streamfree.vip / hhpanda.st AES-GCM -> pure tiktokcdn M3U8)
+        if (window.__PURE_M3U8__) {
+            out.pure_m3u8 = window.__PURE_M3U8__;
+        }
     } catch (e) {}
     return out;
 }
@@ -2500,6 +3588,28 @@ UNIVERSAL_DOM_EPISODE_EXTRACTOR_JS = """
 }
 """
 
+WVC_STREAMFREE_DECRYPT_INIT_JS = r"""
+(() => {
+    try {
+        window.__REMOTE_DEBUG_ENABLED__ = true;
+        window.ucapi = 1;
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
+        const origJoin = Array.prototype.join;
+        Array.prototype.join = function(sep) {
+            const res = origJoin.apply(this, arguments);
+            if (sep === '\n' && typeof res === 'string' && res.startsWith('#EXTM3U') && !res.includes('streamfree.vip/hls/')) {
+                window.__PURE_M3U8__ = origJoin.call(
+                    res.split('\n').filter(l => !l.startsWith('#EXT-X-KEY:')),
+                    '\n'
+                );
+            }
+            return res;
+        };
+    } catch (e) {}
+})();
+"""
+
 
 def expand_dom_episodes_with_api_json(dom_eps: List[Dict[str, Any]], api_json_blobs: List[Any]) -> List[Dict[str, Any]]:
     """
@@ -2584,13 +3694,16 @@ async def sniff_with_playwright(
     page_title_hint: Optional[str] = None,
     is_embed_iframe: bool = False,
     fast_episode_mode: bool = False,
+    srv_label_hint: str = "",
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Universal WVC Mobile App Headless Browser Engine:
     - Automatically routes ISP-blocked / DNS-poisoned domains (like abyssplayer.com) through DoH + TLS Record Splitting!
     - Blocks preroll ad domains (333xbet, player-ads.xml, 1s_blank.mp4, popads, abyss.to homepage redirect).
-    - If `is_embed_iframe=True`, mounts the target URL inside a genuine `<iframe src="...">` wrapper so embed players
-      that check `if (top.location == self.location)` never redirect to their homepage!
+    - If `is_embed_iframe=True`, mounts the target URL inside a genuine `<iframe src="...">` wrapper on a routed `https://`
+      parent page so embed players (like `streamfree.vip` / `abyssplayer.com`) pass `window.self !== window.top` and
+      `location.protocol === "https:"` checks!
+    - Captures decrypted in-memory `#EXTM3U` playlists (`window.__PURE_M3U8__`) for AES-GCM encrypted HLS providers!
     - Captures HTTP Responses by Content-Type (`video/*`, `application/x-mpegurl`, `application/vnd.apple.mpegurl`)
       so extensionless video URLs (like `sssrr.org/sora/...`) are NEVER missed!
     - Executes `WVC_UNIVERSAL_FRAME_HOOK_JS` across every frame (`page.frames`) to harvest `jwplayer().getPlaylist()`,
@@ -2605,17 +3718,25 @@ async def sniff_with_playwright(
     subtitles: List[Dict[str, Any]] = []
     dom_episodes: List[Dict[str, Any]] = []
     api_json_blobs: List[Any] = []
+    captured_pure_m3u8 = False
 
     async with async_playwright() as p:
-        browser = await _launch_playwright_chromium(p, headless=True)
+        browser = await _launch_playwright_chromium(
+            p,
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             ignore_https_errors=True,
         )
+        await context.add_init_script(WVC_STREAMFREE_DECRYPT_INIT_JS)
         page = await context.new_page()
 
         def add_candidate(raw_u: str, ref: str, ua: str, source_tag: str, extra_hints: Optional[Dict[str, Any]] = None, srv_label: str = ""):
             if not raw_u or raw_u.startswith("blob:") or raw_u.startswith("data:"):
+                return
+            if "streamfree.vip/hls/" in raw_u.lower():
                 return
             cleaned, hints = unwrap_and_clean_stream_url(raw_u)
             if not cleaned:
@@ -2637,12 +3758,13 @@ async def sniff_with_playwright(
                 s_type = detect_stream_type(cleaned)
                 if s_type == "auto" and extra_hints and extra_hints.get("force_type"):
                     s_type = extra_hints["force_type"]
+                eff_srv = srv_label or srv_label_hint
                 title_str = page_title_hint or url
-                if srv_label:
-                    title_str = f"{title_str} [{srv_label}]"
+                if eff_srv:
+                    title_str = f"{title_str} [{eff_srv}]"
                 found.append({
                     "title": title_str,
-                    "server_name": srv_label or source_tag,
+                    "server_name": eff_srv or source_tag,
                     "url": cleaned,
                     "type": s_type,
                     "headers": {
@@ -2654,44 +3776,82 @@ async def sniff_with_playwright(
                     "source": source_tag,
                 })
 
-        async def universal_route_interceptor(route):
-            req = route.request
-            r_url = req.url
-            low_u = r_url.lower()
-            # 1. Block gambling ads, VAST prerolls, popup scripts & embed anti-direct redirects (`abyss.to`)
-            if any(bad in low_u for bad in ("333xbet", "video888.mp4", "player-ads.xml", "1s_blank.mp4", "decafeligiblyhad.com", "fuckadblock", "popads", "abyss.to")):
-                await route.abort()
-                return
-            # 2. Auto-rewrite /tvc?id= ad wrapper to /play?id=
-            if "/tvc?id=" in r_url:
-                new_u = r_url.replace("/tvc?id=", "/play?id=")
-                await route.continue_(url=new_u)
-                return
-            # 3. Check if the domain is DNS-poisoned (127.0.0.1) or ISP-blocked (e.g. abyssplayer.com)
-            parsed = urllib.parse.urlparse(r_url)
-            host = parsed.hostname or ""
-            is_poisoned = False
-            if host:
-                try:
-                    ip = socket.gethostbyname(host)
-                    if ip.startswith("127.") or ip == "0.0.0.0":
-                        is_poisoned = True
-                except Exception:
-                    is_poisoned = True
-            if is_poisoned:
-                try:
-                    st, hdrs, body = await asyncio.to_thread(fetch_dpi_tls_split_sync, r_url, dict(req.headers), 8.0)
-                    clean_hdrs = {
-                        k: v for k, v in hdrs.items()
-                        if k.lower() not in ("transfer-encoding", "content-length", "content-encoding", "connection")
-                    }
-                    await route.fulfill(status=st, headers=clean_hdrs, body=body)
-                    return
-                except Exception:
-                    pass
-            await route.continue_()
+        wrapper_origin_url = ""
+        if is_embed_iframe:
+            ref_parsed = urllib.parse.urlparse(custom_referer or url)
+            wrapper_origin_url = f"https://{ref_parsed.netloc or 'hhpanda.st'}/__wvc_embed__"
 
-        await page.route("**/*", universal_route_interceptor)
+        async def wrapper_only_route(route):
+            if page.is_closed():
+                return
+            try:
+                await route.fulfill(
+                    status=200,
+                    content_type="text/html; charset=utf-8",
+                    body=(
+                        f'<!DOCTYPE html><html><body style="margin:0;background:#000;">'
+                        f'<iframe id="sf" src="{url}" width="800" height="600" allow="autoplay; fullscreen"></iframe>'
+                        f'</body></html>'
+                    ),
+                )
+            except Exception:
+                pass
+
+        async def universal_route_interceptor(route):
+            if page.is_closed():
+                return
+            try:
+                req = route.request
+                r_url = req.url
+                low_u = r_url.lower()
+                if wrapper_origin_url and r_url == wrapper_origin_url:
+                    await wrapper_only_route(route)
+                    return
+                # 1. Block gambling ads, VAST prerolls, popup scripts & embed anti-direct redirects (`abyss.to`)
+                if any(bad in low_u for bad in ("333xbet", "video888.mp4", "player-ads.xml", "1s_blank.mp4", "decafeligiblyhad.com", "fuckadblock", "popads", "abyss.to", "darkbytes.xyz")):
+                    await route.abort()
+                    return
+                # 2. Auto-rewrite /tvc?id= ad wrapper to /play?id=
+                if "/tvc?id=" in r_url:
+                    new_u = r_url.replace("/tvc?id=", "/play?id=")
+                    await route.continue_(url=new_u)
+                    return
+                # 3. Check if the domain is DNS-poisoned (127.0.0.1) or ISP-blocked (e.g. abyssplayer.com)
+                parsed = urllib.parse.urlparse(r_url)
+                host = parsed.hostname or ""
+                is_poisoned = False
+                if host and req.resource_type in ("document", "iframe", "script", "stylesheet", "xhr", "fetch", "other"):
+                    try:
+                        ip = socket.gethostbyname(host)
+                        if ip.startswith("127.") or ip == "0.0.0.0":
+                            is_poisoned = True
+                    except Exception:
+                        is_poisoned = True
+                if is_poisoned:
+                    try:
+                        st, hdrs, body = await asyncio.to_thread(fetch_dpi_tls_split_sync, r_url, dict(req.headers), 8.0)
+                        if page.is_closed():
+                            return
+                        clean_hdrs = {
+                            k: v for k, v in hdrs.items()
+                            if k.lower() not in ("transfer-encoding", "content-length", "content-encoding", "connection")
+                        }
+                        await route.fulfill(status=st, headers=clean_hdrs, body=body)
+                        return
+                    except Exception:
+                        if page.is_closed():
+                            return
+                if not page.is_closed():
+                    await route.continue_()
+            except Exception:
+                pass
+
+        # IMPORTANT: ServiceWorker-based decryptors (like streamfree.vip) require ServiceWorkers to not be
+        # intercepted by wildcard `page.route("**/*")`, so we only route `wrapper_origin_url` for them!
+        if is_embed_iframe and "streamfree" in url.lower():
+            await page.route(wrapper_origin_url, wrapper_only_route)
+        else:
+            await page.route("**/*", universal_route_interceptor)
 
         def handle_request(req):
             r_url = req.url
@@ -2746,12 +3906,8 @@ async def sniff_with_playwright(
 
         try:
             if is_embed_iframe:
-                await page.set_content(
-                    f'<!DOCTYPE html><html><body style="margin:0;background:#000;">'
-                    f'<iframe src="{url}" width="800" height="600" referrerpolicy="origin" allow="autoplay; fullscreen"></iframe>'
-                    f'</body></html>'
-                )
-                await page.wait_for_timeout(2800)
+                await page.goto(wrapper_origin_url, wait_until="domcontentloaded", timeout=15000)
+                await page.wait_for_timeout(4200)
             else:
                 await page.goto(url, referer=custom_referer or url, wait_until="domcontentloaded", timeout=15000)
                 await page.wait_for_timeout(2500)
@@ -2764,12 +3920,33 @@ async def sniff_with_playwright(
 
             if not fast_episode_mode:
                 # Harvest from all frames (Attempt 1 + click play/overlay if needed)
-                for _ in range(2):
+                for _ in range(3):
                     for frame in page.frames:
                         try:
                             f_url = frame.url if (frame.url and frame.url.startswith("http")) else url
                             res = await frame.evaluate(WVC_UNIVERSAL_FRAME_HOOK_JS)
                             if isinstance(res, dict):
+                                pure_m3u8 = res.get("pure_m3u8")
+                                if pure_m3u8 and isinstance(pure_m3u8, str) and "#EXTINF" in pure_m3u8 and not captured_pure_m3u8:
+                                    captured_pure_m3u8 = True
+                                    vid_id = uuid.uuid4().hex[:10]
+                                    state.virtual_m3u8_store[vid_id] = {
+                                        "m3u8_text": pure_m3u8,
+                                        "base_url": f_url,
+                                        "headers": {
+                                            "Referer": f_url,
+                                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                                        },
+                                    }
+                                    virt_url = f"http://{get_local_ip()}:{PORT}/proxy/virtual/{vid_id}.m3u8"
+                                    add_candidate(
+                                        virt_url,
+                                        f_url,
+                                        "",
+                                        "WVC AES-GCM Decryptor",
+                                        extra_hints={"force_type": "hls"},
+                                        srv_label=srv_label_hint or "Decrypted HLS",
+                                    )
                                 for t in res.get("tracks") or []:
                                     if t.get("url"):
                                         abs_t = urllib.parse.urljoin(f_url, t["url"])
@@ -2799,7 +3976,7 @@ async def sniff_with_playwright(
                                                 "duration_sec": float(s.get("duration") or 0),
                                                 "force_type": f_type,
                                             },
-                                            srv_label=lbl,
+                                            srv_label=lbl or srv_label_hint,
                                         )
                         except Exception:
                             pass
@@ -2809,7 +3986,7 @@ async def sniff_with_playwright(
                         await page.mouse.click(400, 300)
                     except Exception:
                         pass
-                    await page.wait_for_timeout(2000)
+                    await page.wait_for_timeout(1800)
 
             page_title = page_title_hint or await page.title()
             if page_title and "abyss" not in page_title.lower():
@@ -2819,7 +3996,18 @@ async def sniff_with_playwright(
         except Exception as e:
             print(f"[PLAYWRIGHT WARN] {url}: {e}", flush=True)
         finally:
-            await browser.close()
+            try:
+                await page.unroute_all(behavior="ignoreErrors")
+            except Exception:
+                pass
+            try:
+                await context.close()
+            except Exception:
+                pass
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
     return found, subtitles, dom_episodes
 
@@ -2858,6 +4046,7 @@ async def open_interactive_wvc_browser(payload: Dict[str, Any]):
                     ignore_https_errors=True,
                 )
                 await context.add_init_script("window.open = function() { return null; };")
+                await context.add_init_script(WVC_STREAMFREE_DECRYPT_INIT_JS)
                 page = await context.new_page()
                 # Block popup tabs from gambling ad scripts AFTER main `page` is created!
                 context.on("page", lambda new_p: asyncio.create_task(new_p.close()) if new_p != page else None)
@@ -2907,37 +4096,46 @@ async def open_interactive_wvc_browser(payload: Dict[str, Any]):
                     await state.broadcast_to_pcs({"action": "sniffed_stream", "stream": entry})
 
                 async def interactive_route(route):
-                    req = route.request
-                    r_url = req.url
-                    low_u = r_url.lower()
-                    if any(bad in low_u for bad in ("333xbet", "video888.mp4", "player-ads.xml", "1s_blank.mp4", "decafeligiblyhad.com", "fuckadblock", "popads")):
-                        await route.abort()
+                    if page.is_closed():
                         return
-                    if "/tvc?id=" in r_url:
-                        await route.continue_(url=r_url.replace("/tvc?id=", "/play?id="))
-                        return
-                    parsed = urllib.parse.urlparse(r_url)
-                    host = parsed.hostname or ""
-                    is_poisoned = False
-                    if host:
-                        try:
-                            ip = socket.gethostbyname(host)
-                            if ip.startswith("127.") or ip == "0.0.0.0":
-                                is_poisoned = True
-                        except Exception:
-                            is_poisoned = True
-                    if is_poisoned:
-                        try:
-                            st, hdrs, body = await asyncio.to_thread(fetch_dpi_tls_split_sync, r_url, dict(req.headers), 8.0)
-                            clean_hdrs = {
-                                k: v for k, v in hdrs.items()
-                                if k.lower() not in ("transfer-encoding", "content-length", "content-encoding", "connection")
-                            }
-                            await route.fulfill(status=st, headers=clean_hdrs, body=body)
+                    try:
+                        req = route.request
+                        r_url = req.url
+                        low_u = r_url.lower()
+                        if any(bad in low_u for bad in ("333xbet", "video888.mp4", "player-ads.xml", "1s_blank.mp4", "decafeligiblyhad.com", "fuckadblock", "popads", "darkbytes.xyz")):
+                            await route.abort()
                             return
-                        except Exception:
-                            pass
-                    await route.continue_()
+                        if "/tvc?id=" in r_url:
+                            await route.continue_(url=r_url.replace("/tvc?id=", "/play?id="))
+                            return
+                        parsed = urllib.parse.urlparse(r_url)
+                        host = parsed.hostname or ""
+                        is_poisoned = False
+                        if host and req.resource_type in ("document", "iframe", "script", "stylesheet", "xhr", "fetch", "other"):
+                            try:
+                                ip = socket.gethostbyname(host)
+                                if ip.startswith("127.") or ip == "0.0.0.0":
+                                    is_poisoned = True
+                            except Exception:
+                                is_poisoned = True
+                        if is_poisoned:
+                            try:
+                                st, hdrs, body = await asyncio.to_thread(fetch_dpi_tls_split_sync, r_url, dict(req.headers), 8.0)
+                                if page.is_closed():
+                                    return
+                                clean_hdrs = {
+                                    k: v for k, v in hdrs.items()
+                                    if k.lower() not in ("transfer-encoding", "content-length", "content-encoding", "connection")
+                                }
+                                await route.fulfill(status=st, headers=clean_hdrs, body=body)
+                                return
+                            except Exception:
+                                if page.is_closed():
+                                    return
+                        if not page.is_closed():
+                            await route.continue_()
+                    except Exception:
+                        pass
 
                 await page.route("**/*", interactive_route)
 
@@ -3002,6 +4200,22 @@ async def open_interactive_wvc_browser(payload: Dict[str, Any]):
                                 f_url = frame.url or page.url
                                 res = await frame.evaluate(WVC_UNIVERSAL_FRAME_HOOK_JS)
                                 if isinstance(res, dict):
+                                    pure_m3u8 = res.get("pure_m3u8")
+                                    if pure_m3u8 and isinstance(pure_m3u8, str) and "#EXTINF" in pure_m3u8:
+                                        m_sig = f"pure:{hash(pure_m3u8[:200])}"
+                                        if m_sig not in seen_interactive:
+                                            seen_interactive.add(m_sig)
+                                            vid_id = uuid.uuid4().hex[:10]
+                                            state.virtual_m3u8_store[vid_id] = {
+                                                "m3u8_text": pure_m3u8,
+                                                "base_url": f_url,
+                                                "headers": {
+                                                    "Referer": f_url,
+                                                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                                                },
+                                            }
+                                            virt_url = f"http://{get_local_ip()}:{PORT}/proxy/virtual/{vid_id}.m3u8"
+                                            await register_interactive_stream(virt_url, f_url, f"{p_title} [Decrypted HLS]", {})
                                     for t in res.get("tracks") or []:
                                         if t.get("url"):
                                             await register_sniffed_subtitle({
@@ -3187,12 +4401,18 @@ async def extract_video_streams(payload: Dict[str, Any]):
             if item["url"] not in existing_urls:
                 results.append(item)
 
-    # If HTML unrolling discovered encrypted JS player iframes (like abyssplayer.com/Poh-lIVIIo)
+    # If HTML unrolling discovered encrypted JS player iframes (like abyssplayer.com/Poh-lIVIIo or streamfree.vip)
     # OR if no streams were found yet, run our Universal 4-Layer WVC Playwright Hook!
     if js_iframes:
         pw_tasks = [
-            sniff_with_playwright(ifr_url, custom_referer=ifr_ref, page_title_hint=page_title, is_embed_iframe=True)
-            for ifr_url, ifr_ref, _ in js_iframes[:3]
+            sniff_with_playwright(
+                ifr_url,
+                custom_referer=ifr_ref,
+                page_title_hint=page_title,
+                is_embed_iframe=True,
+                srv_label_hint=ifr_label,
+            )
+            for ifr_url, ifr_ref, ifr_label in js_iframes[:3]
         ]
         pw_outcomes = await asyncio.gather(*pw_tasks, return_exceptions=True)
         existing_urls = {r["url"] for r in results}
@@ -3257,6 +4477,9 @@ async def extract_video_streams(payload: Dict[str, Any]):
             "current_episode_index": state.current_episode_index,
             "auto_next_enabled": state.auto_next_enabled,
             "loop_mode": state.loop_mode,
+            "skip_intro_sec": state.skip_intro_sec,
+            "skip_outro_sec": state.skip_outro_sec,
+            "sponsorblock_enabled": state.sponsorblock_enabled,
             "saved_playlists": list(state.saved_playlists.keys()),
         })
 
@@ -3267,6 +4490,9 @@ async def extract_video_streams(payload: Dict[str, Any]):
         "current_episode_index": state.current_episode_index,
         "auto_next_enabled": state.auto_next_enabled,
         "loop_mode": state.loop_mode,
+        "skip_intro_sec": state.skip_intro_sec,
+        "skip_outro_sec": state.skip_outro_sec,
+        "sponsorblock_enabled": state.sponsorblock_enabled,
         "saved_playlists": list(state.saved_playlists.keys()),
     }
 
@@ -3286,6 +4512,9 @@ async def _broadcast_playlist_state():
         "current_episode_index": state.current_episode_index,
         "auto_next_enabled": state.auto_next_enabled,
         "loop_mode": state.loop_mode,
+        "skip_intro_sec": state.skip_intro_sec,
+        "skip_outro_sec": state.skip_outro_sec,
+        "sponsorblock_enabled": state.sponsorblock_enabled,
         "saved_playlists": list(state.saved_playlists.keys()),
     })
 
@@ -3603,6 +4832,68 @@ async def api_toggle_auto_next(payload: Dict[str, Any]):
     return {"status": "ok", "auto_next_enabled": state.auto_next_enabled}
 
 
+@app.post("/api/playlist/skip-config")
+async def api_update_skip_config(payload: Dict[str, Any]):
+    """
+    Updates Auto-Skip Intro (`skip_intro_sec`), Auto-Skip Outro (`skip_outro_sec`),
+    and YouTube SponsorBlock (`sponsorblock_enabled`).
+    If the TV is currently playing inside the newly configured Intro window, immediately seeks past it!
+    """
+    if "skip_intro_sec" in payload and payload["skip_intro_sec"] is not None:
+        state.skip_intro_sec = max(0, min(1800, int(float(payload["skip_intro_sec"]))))
+    if "skip_outro_sec" in payload and payload["skip_outro_sec"] is not None:
+        state.skip_outro_sec = max(0, min(1800, int(float(payload["skip_outro_sec"]))))
+    if "sponsorblock_enabled" in payload and payload["sponsorblock_enabled"] is not None:
+        state.sponsorblock_enabled = bool(payload["sponsorblock_enabled"])
+
+    await _broadcast_playlist_state()
+
+    # If a video is currently playing inside the intro window, apply skip immediately!
+    cur_pos = float(state.current_media.get("currentTime") or 0)
+    cur_dur = float(state.current_media.get("duration") or 0)
+    if state.current_media.get("playing") and cur_pos > 0:
+        await check_and_apply_skip_rules(cur_pos, cur_dur)
+
+    return {
+        "status": "ok",
+        "skip_intro_sec": state.skip_intro_sec,
+        "skip_outro_sec": state.skip_outro_sec,
+        "sponsorblock_enabled": state.sponsorblock_enabled,
+    }
+
+
+async def fetch_youtube_sponsorblock_segments(yt_watch_url: str) -> List[Dict[str, Any]]:
+    """
+    Queries the official SponsorBlock API (`https://sponsor.ajay.app/api/skipSegments`)
+    for community-submitted Intro, Outro, Sponsor, Self-Promo, Interaction, and Non-Music segments!
+    """
+    m = re.search(r"v=([A-Za-z0-9_-]{11})", yt_watch_url or "")
+    if not m:
+        return []
+    vid_id = m.group(1)
+    categories = json.dumps(["sponsor", "intro", "outro", "selfpromo", "interaction", "music_offtopic"])
+    api_url = f"https://sponsor.ajay.app/api/skipSegments?videoID={vid_id}&categories={urllib.parse.quote(categories)}"
+    try:
+        async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
+            r = await client.get(api_url)
+            if r.status_code == 200:
+                items = r.json()
+                segs = []
+                for it in items:
+                    seg = it.get("segment")
+                    if isinstance(seg, list) and len(seg) == 2:
+                        segs.append({
+                            "start": float(seg[0]),
+                            "end": float(seg[1]),
+                            "category": it.get("category") or "sponsor",
+                            "UUID": it.get("UUID") or "",
+                        })
+                return segs
+    except Exception:
+        pass
+    return []
+
+
 @app.get("/api/info")
 async def get_server_info():
     local_ip = get_local_ip()
@@ -3619,9 +4910,15 @@ async def get_server_info():
         "current_episode_index": state.current_episode_index,
         "auto_next_enabled": state.auto_next_enabled,
         "loop_mode": state.loop_mode,
+        "skip_intro_sec": state.skip_intro_sec,
+        "skip_outro_sec": state.skip_outro_sec,
+        "sponsorblock_enabled": state.sponsorblock_enabled,
         "saved_playlists": list(state.saved_playlists.keys()),
         "last_yt_query": state.last_yt_query,
         "last_yt_results": state.last_yt_results,
+        "subtitle_style": state.subtitle_style,
+        "buffer_config": state.buffer_config,
+        "buffer_stats": state.get_buffer_stats(),
     }
 
 
@@ -3655,6 +4952,58 @@ async def export_clean_share_zip():
     )
 
 
+async def _delayed_push_wvc_subtitle_style(delay_sec: float = 1.6):
+    await asyncio.sleep(delay_sec)
+    style_cmd = state.build_wvc_subtitle_style_cmd()
+    for cid, q in list(state.wvc_queues.items()):
+        try:
+            await q.put(style_cmd)
+        except Exception:
+            pass
+
+
+async def _prewarm_hls_playlist_bg(raw_m3u8_url: str, custom_headers: Dict[str, str], host_base: str):
+    """
+    Fetches and rewrites the HLS playlist in the background right when `/api/cast` is triggered
+    so the Smart RAM Read-Ahead Engine starts downloading the first `.ts` segments immediately!
+    """
+    try:
+        req_headers = {
+            "User-Agent": custom_headers.get(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            ),
+            "Accept": "*/*",
+        }
+        for k, v in (custom_headers or {}).items():
+            if v:
+                req_headers[k] = v
+        if "Referer" in req_headers and "Origin" not in req_headers:
+            parsed_ref = urllib.parse.urlparse(req_headers["Referer"])
+            if parsed_ref.scheme and parsed_ref.netloc:
+                req_headers["Origin"] = f"{parsed_ref.scheme}://{parsed_ref.netloc}"
+
+        _, _, raw_bytes, final_url = await fetch_url_universal(raw_m3u8_url, headers=req_headers, timeout=15.0)
+        text = raw_bytes.decode("utf-8", errors="replace")
+        text = decrypt_enc_aesgcm_m3u8_if_needed(text, final_url, req_headers.get("Referer", ""))
+        if text.lstrip().startswith("#EXTM3U"):
+            # If it's a master playlist pointing to a variant .m3u8, follow the first variant too!
+            rewrite_m3u8_content(text, final_url, custom_headers, host_base)
+            if "#EXT-X-STREAM-INF" in text:
+                for ln in text.splitlines():
+                    s = ln.strip()
+                    if s and not s.startswith("#"):
+                        var_url = urllib.parse.urljoin(final_url, s)
+                        _, _, v_bytes, v_final = await fetch_url_universal(var_url, headers=req_headers, timeout=15.0)
+                        v_txt = v_bytes.decode("utf-8", errors="replace")
+                        v_txt = decrypt_enc_aesgcm_m3u8_if_needed(v_txt, v_final, req_headers.get("Referer", ""))
+                        if v_txt.lstrip().startswith("#EXTM3U"):
+                            rewrite_m3u8_content(v_txt, v_final, custom_headers, host_base)
+                        break
+    except Exception:
+        pass
+
+
 @app.post("/api/cast")
 async def cast_to_tv(payload: Dict[str, Any]):
     raw_url = (payload.get("url") or "").strip().strip('"')
@@ -3668,6 +5017,8 @@ async def cast_to_tv(payload: Dict[str, Any]):
         raw_url = local_info["stream_url"]
         if not payload.get("title") or payload.get("title") == payload.get("url"):
             payload["title"] = local_info["name"]
+        if not payload.get("subtitles") and local_info.get("subtitles"):
+            payload["subtitles"] = local_info["subtitles"]
         if not payload.get("from_episode_playlist"):
             folder_eps = build_local_folder_episodes(p_obj)
             if folder_eps:
@@ -3722,6 +5073,10 @@ async def cast_to_tv(payload: Dict[str, Any]):
     if payload.get("height"):
         state.preferred_height = int(payload["height"])
 
+    # Clear old stream's RAM cache if switching to a different video
+    if raw_url != state.current_media.get("original_url"):
+        state.clear_ram_buffer()
+
     title = payload.get("title") or "Web Video Stream"
     use_proxy = bool(payload.get("use_proxy", True))
     headers = dict(payload.get("headers") or {})
@@ -3750,25 +5105,41 @@ async def cast_to_tv(payload: Dict[str, Any]):
 
     raw_subs = payload.get("subtitles") or []
     processed_subs = []
+    ver_ts = int(time.time() * 1000)
     for sub in raw_subs:
         s_url = (sub.get("url") or "").strip()
         if not s_url:
             continue
         sub_ref = sub.get("referer") or headers.get("Referer", "")
         if s_url.startswith(host_base):
-            proxied_sub = s_url
+            sep = "&" if "?" in s_url else "?"
+            proxied_sub = re.sub(r"[?&]v=\d+", "", s_url)
+            proxied_sub = f"{proxied_sub}{sep}v={ver_ts}"
         else:
-            proxied_sub = f"{host_base}/proxy/subtitle.vtt?url={urllib.parse.quote(s_url)}&referer={urllib.parse.quote(sub_ref)}"
+            proxied_sub = f"{host_base}/proxy/subtitle.vtt?url={urllib.parse.quote(s_url)}&referer={urllib.parse.quote(sub_ref)}&v={ver_ts}"
         processed_subs.append({
             "label": sub.get("label") or "Tiếng Việt",
             "url": proxied_sub,
             "raw_url": s_url,
+            "referer": sub_ref,
         })
 
     mime_type = get_wvc_mime_type(stream_type, raw_url)
     first_sub_url = processed_subs[0]["url"] if processed_subs else None
 
-    state.max_position_reached = 0.0
+    dur_sec = float(payload.get("duration_sec") or 0)
+    initial_start_sec = float(payload.get("start_time") or 0)
+    if initial_start_sec <= 0 and state.skip_intro_sec > 0 and (dur_sec == 0 or dur_sec > state.skip_intro_sec + 45):
+        initial_start_sec = float(state.skip_intro_sec)
+
+    sb_segments: List[Dict[str, Any]] = []
+    if yt_watch and state.sponsorblock_enabled:
+        sb_segments = await fetch_youtube_sponsorblock_segments(yt_watch)
+        for seg in sb_segments:
+            if seg["start"] <= initial_start_sec < seg["end"] - 1.5:
+                initial_start_sec = seg["end"]
+
+    state.max_position_reached = initial_start_sec
     state.current_media = {
         "url": play_url,
         "original_url": raw_url,
@@ -3779,13 +5150,18 @@ async def cast_to_tv(payload: Dict[str, Any]):
         "headers": headers,
         "subtitles": processed_subs,
         "playing": True,
-        "currentTime": float(payload.get("start_time") or 0),
-        "duration": float(payload.get("duration_sec") or 0),
+        "currentTime": initial_start_sec,
+        "duration": dur_sec,
+        "skip_segments": sb_segments,
         "volume": state.current_media.get("volume", 1.0),
         "muted": False,
         "playbackRate": 1.0,
         "updatedAt": time.time(),
     }
+
+    # Pre-warm HLS RAM Buffer before/while TV loads the media!
+    if is_hls and not raw_url.startswith(host_base) and state.buffer_config.get("enabled", True):
+        asyncio.create_task(_prewarm_hls_playlist_bg(raw_url, headers, host_base))
 
     has_next = (0 <= state.current_episode_index < (len(state.episodes) - 1)) or (state.loop_mode == "all" and len(state.episodes) > 1)
     has_prev = (state.current_episode_index > 0) or (state.loop_mode == "all" and len(state.episodes) > 1)
@@ -3806,9 +5182,20 @@ async def cast_to_tv(payload: Dict[str, Any]):
     }
 
     await state.broadcast_to_tvs(
-        ws_message={"action": "load", "media": state.current_media},
+        ws_message={
+            "action": "load",
+            "media": state.current_media,
+            "subtitle_style": state.subtitle_style,
+            "buffer_config": state.buffer_config,
+        },
         wvc_command=wvc_load_cmd,
     )
+    # Push custom subtitle styling right after loadMedia + delayed push once WVC player mounts!
+    style_cmd = state.build_wvc_subtitle_style_cmd()
+    for cid, q in list(state.wvc_queues.items()):
+        await q.put(style_cmd)
+    asyncio.create_task(_delayed_push_wvc_subtitle_style(1.8))
+
     await state.broadcast_to_pcs({
         "action": "media_updated",
         "media": state.current_media,
@@ -3834,34 +5221,280 @@ async def cast_to_tv(payload: Dict[str, Any]):
 @app.post("/api/subtitles/cast")
 async def cast_subtitle_to_tv(payload: Dict[str, Any]):
     """
-    Beams a .SRT or .VTT subtitle track directly onto the currently playing Smart TV
-    using Native WVC's `subtitlesSet` command (auto-converted to UTF-8 WebVTT via /proxy/subtitle.vtt)!
+    Beams a .SRT, .VTT, or .ASS subtitle track directly onto the currently playing Smart TV
+    using Native WVC's `subtitlesSet` + `subtitlesStyleSet` commands AND WebSocket `subtitle` event!
     """
     s_url = (payload.get("url") or "").strip()
+    sub_id = (payload.get("id") or "").strip()
+    local_ip = get_local_ip()
+    host_base = f"http://{local_ip}:{PORT}"
+    ver_ts = int(time.time() * 1000)
+
+    if sub_id and not s_url:
+        s_url = f"{host_base}/proxy/subtitle.vtt?id={urllib.parse.quote(sub_id)}"
+
     if not s_url:
-        raise HTTPException(status_code=400, detail="Thiếu URL phụ đề (.srt / .vtt)!")
+        raise HTTPException(status_code=400, detail="Thiếu URL hoặc ID phụ đề (.srt / .vtt / .ass)!")
 
     referer = (payload.get("referer") or state.current_media.get("headers", {}).get("Referer") or "").strip()
     label = payload.get("label") or "Tiếng Việt (.VTT)"
-    local_ip = get_local_ip()
-    host_base = f"http://{local_ip}:{PORT}"
 
     if s_url.startswith(host_base):
-        proxied_sub = s_url
+        clean_local = re.sub(r"[?&]v=\d+", "", s_url)
+        sep = "&" if "?" in clean_local else "?"
+        proxied_sub = f"{clean_local}{sep}v={ver_ts}"
     else:
-        proxied_sub = f"{host_base}/proxy/subtitle.vtt?url={urllib.parse.quote(s_url)}&referer={urllib.parse.quote(referer)}"
+        proxied_sub = f"{host_base}/proxy/subtitle.vtt?url={urllib.parse.quote(s_url)}&referer={urllib.parse.quote(referer)}&v={ver_ts}"
 
-    sub_obj = {"label": label, "url": proxied_sub, "raw_url": s_url}
-    state.current_media["subtitles"] = [sub_obj] + [
-        x for x in state.current_media.get("subtitles", []) if x.get("url") != proxied_sub
+    sub_obj = {"label": label, "url": proxied_sub, "raw_url": s_url, "referer": referer}
+    existing = [
+        x for x in state.current_media.get("subtitles", [])
+        if x.get("raw_url") != s_url and re.sub(r"[?&]v=\d+", "", x.get("url") or "") != re.sub(r"[?&]v=\d+", "", proxied_sub)
     ]
+    state.current_media["subtitles"] = [sub_obj] + existing
 
-    # Native WVC subtitlesSet command (CommandReceiver.ts line 365)
+    # 1. Push subtitlesSet to Native WVC TV and WebSocket TV
     await state.broadcast_to_tvs(
-        ws_message={"action": "subtitle", "subtitle": sub_obj},
+        ws_message={"action": "subtitle", "subtitle": sub_obj, "style": state.subtitle_style},
         wvc_command={"cmd": "subtitlesSet", "url": proxied_sub},
     )
-    return {"status": "ok", "subtitle": sub_obj}
+    # 2. Immediately push subtitlesStyleSet so font size/color/opacity/outline apply on Native WVC TV
+    style_cmd = state.build_wvc_subtitle_style_cmd()
+    for cid, q in list(state.wvc_queues.items()):
+        await q.put(style_cmd)
+
+    await state.broadcast_to_pcs({
+        "action": "media_updated",
+        "media": state.current_media,
+    })
+    return {"status": "ok", "subtitle": sub_obj, "style": state.subtitle_style}
+
+
+@app.post("/api/subtitles/style")
+async def update_subtitle_style(payload: Dict[str, Any]):
+    """
+    Updates subtitle style (font size, text color, background color & opacity, outline/shadow,
+    font family, bold/italic, vertical bottom position %, and timing offset +/- seconds) and
+    applies it LIVE on both Native WVC Receiver (`cast2tv.app`) and Web TV (`/tv`)!
+    """
+    prev_offset = float(state.subtitle_style.get("offsetSec") or 0.0)
+    prev_bottom = int(state.subtitle_style.get("bottomPosition") or 8)
+
+    if payload.get("reset"):
+        state.subtitle_style = {
+            "textSize": 1.5,
+            "textColor": "#FFFF00",
+            "backgroundColor": "#000000",
+            "backgroundOpacity": 0.65,
+            "edgeStyle": "outline",
+            "edgeColor": "#000000",
+            "textFont": "sans-serif",
+            "textStyle": "bold",
+            "bottomPosition": 8,
+            "offsetSec": 0.0,
+        }
+    else:
+        if "textSize" in payload and payload["textSize"] is not None:
+            state.subtitle_style["textSize"] = max(0.5, min(4.0, round(float(payload["textSize"]), 2)))
+        if "textColor" in payload and payload["textColor"]:
+            state.subtitle_style["textColor"] = str(payload["textColor"]).strip()
+        if "backgroundColor" in payload and payload["backgroundColor"]:
+            state.subtitle_style["backgroundColor"] = str(payload["backgroundColor"]).strip()
+        if "backgroundOpacity" in payload and payload["backgroundOpacity"] is not None:
+            state.subtitle_style["backgroundOpacity"] = max(0.0, min(1.0, round(float(payload["backgroundOpacity"]), 2)))
+        if "edgeStyle" in payload and payload["edgeStyle"] in ("outline", "shadow", "normal"):
+            state.subtitle_style["edgeStyle"] = payload["edgeStyle"]
+        if "edgeColor" in payload and payload["edgeColor"]:
+            state.subtitle_style["edgeColor"] = str(payload["edgeColor"]).strip()
+        if "textFont" in payload and payload["textFont"]:
+            state.subtitle_style["textFont"] = str(payload["textFont"]).strip()
+        if "textStyle" in payload and payload["textStyle"] in ("normal", "bold", "italic", "bold_italic"):
+            state.subtitle_style["textStyle"] = payload["textStyle"]
+        if "bottomPosition" in payload and payload["bottomPosition"] is not None:
+            state.subtitle_style["bottomPosition"] = max(2, min(60, int(float(payload["bottomPosition"]))))
+        if "offsetSec" in payload and payload["offsetSec"] is not None:
+            state.subtitle_style["offsetSec"] = max(-300.0, min(300.0, round(float(payload["offsetSec"]), 2)))
+        if "offsetDelta" in payload and payload["offsetDelta"] is not None:
+            new_off = float(state.subtitle_style.get("offsetSec") or 0.0) + float(payload["offsetDelta"])
+            state.subtitle_style["offsetSec"] = max(-300.0, min(300.0, round(new_off, 2)))
+
+    state.save_playlists_to_disk()
+
+    wvc_style_cmd = state.build_wvc_subtitle_style_cmd()
+    await state.broadcast_to_tvs(
+        ws_message={"action": "subtitle_style", "style": state.subtitle_style},
+        wvc_command=wvc_style_cmd,
+    )
+
+    # If timing offset (`offsetSec`) or vertical position (`bottomPosition`) changed while a subtitle is active,
+    # re-push `subtitlesSet` with a fresh `&v=...` cache-buster so Native WVC TV reloads the shifted VTT cues!
+    new_offset = float(state.subtitle_style.get("offsetSec") or 0.0)
+    new_bottom = int(state.subtitle_style.get("bottomPosition") or 8)
+    active_subs = state.current_media.get("subtitles") or []
+    if active_subs and (abs(new_offset - prev_offset) > 0.001 or new_bottom != prev_bottom):
+        top_sub = active_subs[0]
+        base_sub_url = re.sub(r"[?&]v=\d+", "", top_sub.get("url") or "")
+        if base_sub_url:
+            sep = "&" if "?" in base_sub_url else "?"
+            fresh_url = f"{base_sub_url}{sep}v={int(time.time() * 1000)}"
+            top_sub["url"] = fresh_url
+            for cid, q in list(state.wvc_queues.items()):
+                await q.put({"cmd": "subtitlesSet", "url": fresh_url})
+                await q.put(wvc_style_cmd)
+
+    await state.broadcast_to_pcs({
+        "action": "subtitle_style",
+        "style": state.subtitle_style,
+    })
+    return {"status": "ok", "style": state.subtitle_style, "wvc_cmd": wvc_style_cmd}
+
+
+@app.post("/api/subtitles/upload")
+async def upload_subtitle_file(payload: Dict[str, Any]):
+    """
+    Uploads a local .SRT / .VTT / .ASS / .SSA subtitle file from PC or Mobile browser,
+    converts it to UTF-8 WebVTT on the fly, and immediately casts it to the TV!
+    """
+    filename = (payload.get("filename") or "Phu_de_tai_len.srt").strip()
+    content_b64 = payload.get("content_base64") or ""
+    raw_text = payload.get("content") or ""
+
+    if content_b64:
+        try:
+            raw_bytes = base64.b64decode(content_b64)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Lỗi giải mã file phụ đề: {e}")
+    elif raw_text:
+        raw_bytes = raw_text.encode("utf-8")
+    else:
+        raise HTTPException(status_code=400, detail="File phụ đề trống!")
+
+    sub_id = f"up_{uuid.uuid4().hex[:8]}"
+    decoded_text = _decode_subtitle_bytes(raw_bytes)
+    state.uploaded_subtitles[sub_id] = {
+        "id": sub_id,
+        "label": filename,
+        "content": decoded_text,
+        "created_at": time.time(),
+    }
+
+    local_ip = get_local_ip()
+    host_base = f"http://{local_ip}:{PORT}"
+    proxied_url = f"{host_base}/proxy/subtitle.vtt?id={sub_id}&v={int(time.time() * 1000)}"
+    label = f"📁 {filename}"
+
+    sub_entry = await register_sniffed_subtitle({
+        "url": proxied_url,
+        "label": label,
+    })
+
+    if payload.get("auto_cast", True):
+        await cast_subtitle_to_tv({"url": proxied_url, "label": label})
+
+    return {
+        "status": "ok",
+        "id": sub_id,
+        "url": proxied_url,
+        "label": label,
+        "subtitle": sub_entry,
+    }
+
+
+@app.post("/api/subtitles/stop")
+async def stop_subtitle_on_tv():
+    """
+    Turns off subtitles on both Native WVC Receiver (`{"cmd": "subtitlesStop"}`) and Web TV (`/tv`).
+    """
+    await state.broadcast_to_tvs(
+        ws_message={"action": "subtitle_stop"},
+        wvc_command={"cmd": "subtitlesStop"},
+    )
+    return {"status": "ok"}
+
+
+@app.post("/api/buffer/config")
+async def update_buffer_config(payload: Dict[str, Any]):
+    """
+    Updates the Smart Stream Disk/RAM Buffer & Read-Ahead Pre-fetcher mode (`normal` | `weak_net` | `ultra`)
+    or custom parameters and pushes updated buffer settings to connected TVs & PC Dashboards.
+    """
+    prev_storage = state.buffer_config.get("storage_type", "disk")
+    prev_disk_dir = state.buffer_config.get("disk_dir", str(DEFAULT_DISK_CACHE_DIR))
+
+    mode = (payload.get("mode") or "").strip().lower()
+    if mode in BUFFER_PRESETS:
+        state.buffer_config.update(BUFFER_PRESETS[mode])
+        # Keep the user's chosen storage_type and disk_dir when switching speed presets
+        state.buffer_config["storage_type"] = prev_storage
+        state.buffer_config["disk_dir"] = prev_disk_dir
+
+    if "storage_type" in payload and payload["storage_type"] is not None:
+        st = str(payload["storage_type"]).strip().lower()
+        if st in ("disk", "ram"):
+            state.buffer_config["storage_type"] = st
+
+    if "disk_dir" in payload and payload["disk_dir"] is not None:
+        dd = str(payload["disk_dir"]).strip()
+        state.buffer_config["disk_dir"] = dd if dd else str(DEFAULT_DISK_CACHE_DIR)
+
+    if (
+        state.buffer_config.get("storage_type") != prev_storage
+        or state.buffer_config.get("disk_dir") != prev_disk_dir
+    ):
+        state.clear_ram_buffer()
+        state.ensure_disk_cache_dir()
+
+    for k in ("enabled", "prebuffer_before_play"):
+        if k in payload and payload[k] is not None:
+            state.buffer_config[k] = bool(payload[k])
+
+    for k, bounds in (
+        ("prefetch_segments", (0, 60)),
+        ("max_ram_mb", (32, 8192)),
+        ("mp4_readahead_mb", (4, 512)),
+        ("hls_max_buffer_sec", (30, 900)),
+        ("concurrency", (1, 8)),
+    ):
+        if k in payload and payload[k] is not None:
+            lo, hi = bounds
+            state.buffer_config[k] = max(lo, min(hi, int(payload[k])))
+
+    state.hls_prefetch_sem = asyncio.Semaphore(int(state.buffer_config.get("concurrency") or 4))
+    _evict_hls_cache_if_needed()
+    state.save_playlists_to_disk()
+
+    stats = state.get_buffer_stats()
+    await state.broadcast_to_tvs(
+        ws_message={"action": "buffer_config", "config": state.buffer_config},
+        wvc_command=None,
+    )
+    await state.broadcast_to_pcs({
+        "action": "buffer_config",
+        "config": state.buffer_config,
+        "stats": stats,
+    })
+    return {"status": "ok", "config": state.buffer_config, "stats": stats}
+
+
+@app.get("/api/buffer/stats")
+async def get_buffer_stats_api():
+    return {
+        "status": "ok",
+        "config": state.buffer_config,
+        "stats": state.get_buffer_stats(),
+    }
+
+
+@app.post("/api/buffer/clear")
+async def clear_buffer_api():
+    state.clear_ram_buffer()
+    stats = state.get_buffer_stats()
+    await state.broadcast_to_pcs({
+        "action": "buffer_config",
+        "config": state.buffer_config,
+        "stats": stats,
+    })
+    return {"status": "ok", "stats": stats}
 
 
 @app.post("/api/control")
@@ -4060,6 +5693,31 @@ async def clear_sniffed_history():
     return {"status": "ok"}
 
 
+@app.post("/api/sniff-remove")
+async def remove_sniffed_item(payload: Dict[str, Any]):
+    raw_url = payload.get("url") or ""
+    state.sniffed_history = [s for s in state.sniffed_history if s.get("url") != raw_url]
+    state.sniffed_subtitles = [s for s in state.sniffed_subtitles if s.get("url") != raw_url]
+    await state.broadcast_to_pcs({
+        "action": "sniff_removed",
+        "url": raw_url,
+    })
+    return {"status": "ok", "url": raw_url}
+
+
+@app.post("/api/youtube/clear")
+async def api_youtube_clear():
+    state.last_yt_query = ""
+    state.last_yt_results = []
+    state.save_playlists_to_disk()
+    await state.broadcast_to_pcs({
+        "action": "yt_search_updated",
+        "results": [],
+        "query": "",
+    })
+    return {"status": "ok"}
+
+
 # ============================================================================
 # 9. DLNA / UPNP AUTO-DISCOVERY & SOAP AVTRANSPORT PUSH
 # ============================================================================
@@ -4209,6 +5867,8 @@ async def ws_tv_endpoint(websocket: WebSocket):
         "action": "init",
         "server": ip_to_cast2tv_code(local_ip, PORT),
         "media": state.current_media if state.current_media.get("url") else None,
+        "subtitle_style": state.subtitle_style,
+        "buffer_config": state.buffer_config,
     })
 
     try:
@@ -4225,7 +5885,7 @@ async def ws_tv_endpoint(websocket: WebSocket):
                 await state.broadcast_to_pcs({
                     "action": "tv_status",
                     "tv_id": cid,
-                    "status": data,
+                    "status": {**data, "buffer_stats": state.get_buffer_stats()},
                 })
             elif msg_type == "ended":
                 await trigger_auto_next_if_ready("WS TV ended")
@@ -4257,9 +5917,15 @@ async def ws_pc_endpoint(websocket: WebSocket):
         "current_episode_index": state.current_episode_index,
         "auto_next_enabled": state.auto_next_enabled,
         "loop_mode": state.loop_mode,
+        "skip_intro_sec": state.skip_intro_sec,
+        "skip_outro_sec": state.skip_outro_sec,
+        "sponsorblock_enabled": state.sponsorblock_enabled,
         "saved_playlists": list(state.saved_playlists.keys()),
         "last_yt_query": state.last_yt_query,
         "last_yt_results": state.last_yt_results,
+        "subtitle_style": state.subtitle_style,
+        "buffer_config": state.buffer_config,
+        "buffer_stats": state.get_buffer_stats(),
     })
 
     try:

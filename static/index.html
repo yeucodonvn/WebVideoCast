@@ -561,7 +561,7 @@
   <div class="container">
     <header>
       <div class="brand">
-        <h1>⚡ WebVideoCast Studio v3.0 (PC & Mobile Sync)</h1>
+        <h1>⚡ WebVideoCast Studio v3.1 (PC & Mobile Sync)</h1>
         <p>Điều khiển & đồng bộ Danh Sách Phát thời gian thực giữa Máy Tính, Điện Thoại và Smart TV</p>
       </div>
       <div class="header-badges">
@@ -570,113 +570,385 @@
           <strong id="cast-code">--</strong>
         </div>
         <div class="code-badge" style="border-color: rgba(16,185,129,0.5); background: rgba(16,185,129,0.14);">
-          <small style="color:#6ee7b7;">📱 Mở điều khiển trên Điện Thoại (Cùng Wi-Fi)</small>
-          <strong id="mobile-remote-url" style="font-size:1.05rem; letter-spacing:0.5px; color:#a7f3d0;">http://192.168.1.3:30001</strong>
-        </div>
-        <div class="code-badge" style="border-color: rgba(59,130,246,0.45); background: rgba(59,130,246,0.14);">
-          <small style="color:#93c5fd;">Link mở trực tiếp trên TV</small>
-          <strong id="direct-url" style="font-size:1.0rem; letter-spacing:0.5px;">http://...</strong>
+          <small style="color:#6ee7b7;">📱 Mở trên Điện Thoại / TV</small>
+          <strong id="mobile-remote-url" style="font-size:1.02rem; letter-spacing:0.5px; color:#a7f3d0;">http://192.168.1.3:30001</strong>
+          <span id="direct-url" style="display:none;"></span>
+          <span id="guide-code" style="display:none;"></span>
+          <span id="guide-url" style="display:none;"></span>
         </div>
         <div class="tv-status-pill">
           <span class="dot"></span>
           <span id="tv-count">0 TV đang kết nối</span>
         </div>
-        <a href="/api/export-share-zip" class="btn btn-secondary" style="padding:10px 14px; font-size:0.84rem; color:#fcd34d; border-color:rgba(245,158,11,0.45); background:rgba(245,158,11,0.12);" title="Tải gói .ZIP sạch (không kèm lịch sử cá nhân) để gửi cho bạn bè">
-          📦 Tải Bản Share (.ZIP)
+        <span id="buffer-live-badge" class="badge-tag" style="background:rgba(16,185,129,0.18); color:#6ee7b7; border:1px solid rgba(16,185,129,0.45); font-size:0.82rem; padding:9px 13px; border-radius:12px; cursor:pointer;" onclick="switchMainTab('subbuf')" title="Bấm để mở Tab Cài đặt Phụ đề & Bộ đệm Ổ cứng/RAM">
+          💿 Đệm Ổ Cứng: 0.0 MB (0 đoạn .TS)
+        </span>
+        <a id="bookmarklet-link" href="#" class="btn btn-secondary" style="padding:9px 12px; font-size:0.8rem; color:#f9a8d4; border-color:rgba(236,72,153,0.4);" title="Kéo nút này thả vào thanh Bookmarks của trình duyệt để bắt link nhanh">
+          🔖 Bookmarklet
+        </a>
+        <a href="/api/export-share-zip" class="btn btn-secondary" style="padding:9px 12px; font-size:0.8rem; color:#fcd34d; border-color:rgba(245,158,11,0.45); background:rgba(245,158,11,0.12);" title="Tải gói .ZIP sạch (không kèm lịch sử cá nhân) để gửi cho bạn bè">
+          📦 Tải .ZIP
         </a>
       </div>
     </header>
 
-    <!-- TOP NAVIGATION TABS -->
+    <!-- 4 DISTINCT TOP NAVIGATION TABS (NO OVERLAPPING MODALS, NO DUPLICATE PLAYLIST DOCKS) -->
     <div class="top-tabs">
       <button id="tab-btn-yt" class="tab-btn active-yt" onclick="switchMainTab('yt')">
-        🔴 TAB 1: TÌM YOUTUBE & NHẠC / PHIM LẶP LẠI
-      </button>
-      <button id="tab-btn-playlist" class="tab-btn" onclick="switchMainTab('playlist')">
-        📋 DANH SÁCH PHÁT ĐỒNG BỘ CHUNG (<span id="tab-ep-count">0</span>)
+        🔴 1. Tìm YouTube
       </button>
       <button id="tab-btn-web" class="tab-btn" onclick="switchMainTab('web')">
-        🎬 TAB 2: BẮN PHIM WEB (.M3U8 / .MP4) & Ổ CỨNG
+        🎬 2. Phim Web & Ổ Cứng
+      </button>
+      <button id="tab-btn-playlist" class="tab-btn" onclick="switchMainTab('playlist')">
+        📋 3. Danh Sách Phát (<span id="tab-ep-count">0</span>)
+      </button>
+      <button id="tab-btn-subbuf" class="tab-btn" onclick="switchMainTab('subbuf')">
+        💬 4. Phụ Đề & 💿 Buffer
       </button>
     </div>
 
     <!-- ========================================================================== -->
-    <!-- TAB 1: DEDICATED YOUTUBE STUDIO & MULTI-VIDEO / MUSIC LOOP JUKEBOX         -->
+    <!-- TAB 4: DEDICATED SUBTITLE & SMART DISK/RAM BUFFER STUDIO TAB               -->
     <!-- ========================================================================== -->
-    <div id="tab-pane-yt" class="grid-yt">
-      <!-- LEFT COLUMN OF YOUTUBE TAB: SEARCH, DIRECT URL & AUTO-SNIFFED YOUTUBE -->
-      <div>
-        <div class="card" style="border-color: rgba(239, 68, 68, 0.45);">
-          <div class="card-title">
-            <span>🔴 Tìm Kiếm YouTube Hoặc Dán Link Video / Playlist YouTube</span>
-            <button class="btn-secondary" style="padding:7px 12px; font-size:0.8rem; background:linear-gradient(135deg,#10b981,#059669); color:#fff; border:none;" onclick="openYouTubeInWvcBrowser(this)">
-              🌐 Mở YouTube Trong Trình Duyệt WVC (Tự Bắt Khi Click Video)
-            </button>
+    <div id="subbuf-studio-wrap" class="card" style="display:none; margin-bottom:22px; border:1px solid rgba(250,204,21,0.45); background:linear-gradient(145deg, rgba(15,23,42,0.97), rgba(30,41,59,0.95));">
+      <div class="card-title" style="flex-wrap:wrap; gap:10px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:12px; margin-bottom:16px;">
+        <span style="color:#fde047; font-size:1.05rem;">💬 Thiết Lập Phụ Đề (Cỡ Chữ, Màu, Viền, Độ Trễ) & 💿 Bộ Đệm Ổ Cứng / RAM Chống Đứng Hình Khi Mạng Yếu</span>
+      </div>
+
+      <div class="grid-main" style="gap:20px; align-items:start;">
+        <!-- LEFT HALF: SUBTITLE STYLING & UPLOAD STUDIO -->
+        <div style="background:rgba(15,23,42,0.75); border:1px solid rgba(244,114,182,0.3); border-radius:16px; padding:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+            <strong style="color:#f472b6; font-size:0.96rem;">🎨 Tùy Chỉnh Giao Diện & Cỡ Chữ Phụ Đề Trên TV</strong>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="btn-secondary" style="padding:5px 10px; font-size:0.76rem; color:#93c5fd;" onclick="resetSubtitleStyle()">🔄 Mặc định</button>
+              <button class="btn-secondary" style="padding:5px 10px; font-size:0.76rem; color:#fca5a5; border-color:rgba(239,68,68,0.4);" onclick="stopSubtitleOnTv()">🚫 Tắt Sub Trên TV</button>
+            </div>
           </div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
-            <input
-              type="text"
-              id="yt-query"
-              placeholder="Nhập tên bài hát, nhạc Lofi, bộ phim trên YouTube HOẶC dán link https://www.youtube.com/watch?v=..."
-              style="flex:1; min-width:260px; font-size:1rem; padding:14px 16px;"
-              onkeydown="if(event.key==='Enter') searchYouTube();"
-            />
+
+          <!-- LIVE SUBTITLE PREVIEW SCREEN -->
+          <div style="position:relative; height:118px; border-radius:12px; background:linear-gradient(135deg, #1e293b 0%, #0f172a 55%, #1e1b4b 100%); border:1px solid rgba(148,163,184,0.25); overflow:hidden; display:flex; align-items:flex-end; justify-content:center; margin-bottom:14px; padding:10px;">
+            <span style="position:absolute; top:8px; left:12px; font-size:0.72rem; color:#64748b; font-weight:600; letter-spacing:0.5px;">XEM TRƯỚC PHỤ ĐỀ TRÊN TV</span>
+            <div id="sub-preview-box" style="padding:4px 12px; border-radius:6px; text-align:center; line-height:1.35; transition:all 0.15s ease; margin-bottom:6px;">
+              Phụ đề Tiếng Việt sắc nét — Cỡ chữ 150%
+            </div>
           </div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button class="btn-cast" id="btn-yt-search" style="background:linear-gradient(135deg,#ef4444,#ec4899); flex:1; justify-content:center;" onclick="searchYouTube()">
-              🔎 Tìm Kiếm / Bóc Tách YouTube
+
+          <!-- UPLOAD LOCAL .SRT / .VTT / .ASS FILE -->
+          <div style="margin-bottom:14px; padding:10px 12px; border-radius:12px; background:rgba(30,41,59,0.7); border:1px dashed rgba(244,114,182,0.45); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+            <div>
+              <div style="font-size:0.84rem; font-weight:700; color:#f9a8d4;">📁 Tải file Phụ đề rời từ Máy tính / Điện thoại (.SRT, .VTT, .ASS)</div>
+              <small style="color:#94a3b8; font-size:0.75rem;">Tự động sửa lỗi font Tiếng Việt, chuyển sang WebVTT và bắn thẳng lên TV</small>
+            </div>
+            <label class="btn btn-cast" style="padding:8px 14px; font-size:0.82rem; cursor:pointer; margin:0;">
+              📤 Chọn File .SRT / .VTT / .ASS
+              <input type="file" id="sub-file-upload" accept=".srt,.vtt,.ass,.ssa" style="display:none;" onchange="uploadLocalSubtitleFile(this)" />
+            </label>
+          </div>
+
+          <!-- 1. FONT SIZE SLIDER & PRESETS -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0; font-size:0.84rem; color:#e2e8f0;">📏 <strong>Cỡ chữ Phụ đề (Font Size):</strong> <span id="sub-size-val" style="color:#fde047; font-weight:800;">150% (1.5x)</span></label>
+              <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                <button type="button" class="btn-secondary" style="padding:3px 8px; font-size:0.73rem;" onclick="setSubSizePreset(1.0)">100%</button>
+                <button type="button" class="btn-secondary" style="padding:3px 8px; font-size:0.73rem;" onclick="setSubSizePreset(1.25)">125%</button>
+                <button type="button" class="btn-secondary" style="padding:3px 8px; font-size:0.73rem; border-color:#fde047; color:#fde047;" onclick="setSubSizePreset(1.5)">150%</button>
+                <button type="button" class="btn-secondary" style="padding:3px 8px; font-size:0.73rem;" onclick="setSubSizePreset(1.85)">185%</button>
+                <button type="button" class="btn-secondary" style="padding:3px 8px; font-size:0.73rem;" onclick="setSubSizePreset(2.2)">220%</button>
+                <button type="button" class="btn-secondary" style="padding:3px 8px; font-size:0.73rem;" onclick="setSubSizePreset(2.6)">260%</button>
+              </div>
+            </div>
+            <input type="range" id="sub-size-slider" min="0.6" max="3.0" step="0.05" value="1.5" oninput="onSubStyleInput(false)" onchange="onSubStyleInput(true)" style="width:100%;" />
+          </div>
+
+          <!-- 2. TEXT COLOR & BACKGROUND OPACITY -->
+          <div class="row-2" style="gap:12px; margin-bottom:12px;">
+            <div>
+              <label style="font-size:0.82rem; color:#e2e8f0; margin-bottom:6px;">🎨 <strong>Màu chữ Phụ đề:</strong></label>
+              <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <button type="button" onclick="setSubColor('#FFFF00')" title="Vàng Rạp Phim" style="width:28px; height:28px; border-radius:50%; background:#FFFF00; border:2px solid #fff; cursor:pointer;"></button>
+                <button type="button" onclick="setSubColor('#FFFFFF')" title="Trắng Tinh" style="width:28px; height:28px; border-radius:50%; background:#FFFFFF; border:2px solid #64748b; cursor:pointer;"></button>
+                <button type="button" onclick="setSubColor('#00FFFF')" title="Xanh Cyan" style="width:28px; height:28px; border-radius:50%; background:#00FFFF; border:2px solid #64748b; cursor:pointer;"></button>
+                <button type="button" onclick="setSubColor('#4ADE80')" title="Xanh Lá Dịu" style="width:28px; height:28px; border-radius:50%; background:#4ADE80; border:2px solid #64748b; cursor:pointer;"></button>
+                <button type="button" onclick="setSubColor('#F472B6')" title="Hồng" style="width:28px; height:28px; border-radius:50%; background:#F472B6; border:2px solid #64748b; cursor:pointer;"></button>
+                <input type="color" id="sub-text-color" value="#FFFF00" onchange="onSubStyleInput(true)" style="width:34px; height:30px; padding:0; border:none; background:transparent; cursor:pointer;" />
+              </div>
+            </div>
+
+            <div>
+              <label style="font-size:0.82rem; color:#e2e8f0; margin-bottom:6px;">⬛ <strong>Độ đậm nền hộp:</strong> <span id="sub-bg-opacity-val" style="color:#93c5fd;">65%</span></label>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <input type="range" id="sub-bg-opacity" min="0" max="1" step="0.05" value="0.65" oninput="onSubStyleInput(false)" onchange="onSubStyleInput(true)" style="flex:1;" />
+                <input type="color" id="sub-bg-color" value="#000000" onchange="onSubStyleInput(true)" title="Màu nền hộp phụ đề" style="width:32px; height:28px; padding:0; border:none; background:transparent; cursor:pointer;" />
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. EDGE STYLE (OUTLINE / SHADOW), FONT FAMILY & TEXT STYLE -->
+          <div class="row-2" style="gap:12px; margin-bottom:12px;">
+            <div>
+              <label style="font-size:0.82rem; color:#e2e8f0; margin-bottom:6px;">✨ <strong>Viền chữ & Kiểu đậm:</strong></label>
+              <div style="display:flex; gap:6px;">
+                <select id="sub-edge-style" onchange="onSubStyleInput(true)" style="flex:1; padding:8px; font-size:0.82rem; border-radius:8px; background:#0f172a; color:#fff; border:1px solid rgba(148,163,184,0.3);">
+                  <option value="outline">Viền đen sắc nét (Outline)</option>
+                  <option value="shadow">Đổ bóng dịu (Shadow)</option>
+                  <option value="normal">Không viền</option>
+                </select>
+                <select id="sub-text-style" onchange="onSubStyleInput(true)" style="width:115px; padding:8px; font-size:0.82rem; border-radius:8px; background:#0f172a; color:#fff; border:1px solid rgba(148,163,184,0.3);">
+                  <option value="bold">Chữ Đậm</option>
+                  <option value="normal">Chữ Thường</option>
+                  <option value="italic">Chữ Nghiêng</option>
+                  <option value="bold_italic">Đậm+Nghiêng</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label style="font-size:0.82rem; color:#e2e8f0; margin-bottom:6px;">🔤 <strong>Phông chữ & Vị trí đáy:</strong> <span id="sub-bottom-val" style="color:#6ee7b7;">8%</span></label>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <select id="sub-font-family" onchange="onSubStyleInput(true)" style="width:130px; padding:8px; font-size:0.82rem; border-radius:8px; background:#0f172a; color:#fff; border:1px solid rgba(148,163,184,0.3);">
+                  <option value="sans-serif">Sans-Serif (Chuẩn)</option>
+                  <option value="Arial, Helvetica, sans-serif">Arial / Helvetica</option>
+                  <option value="Roboto, sans-serif">Roboto</option>
+                  <option value="Tahoma, sans-serif">Tahoma</option>
+                  <option value="Verdana, sans-serif">Verdana</option>
+                  <option value="monospace">Monospace</option>
+                  <option value="serif">Serif</option>
+                </select>
+                <input type="range" id="sub-bottom-pos" min="2" max="45" step="1" value="8" oninput="onSubStyleInput(false)" onchange="onSubStyleInput(true)" title="Độ cao phụ đề so với mép dưới màn hình TV" style="flex:1;" />
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. SUBTITLE TIMING OFFSET (+/- SECONDS SYNC) -->
+          <div style="padding:10px 12px; border-radius:10px; background:rgba(30,41,59,0.65); border:1px solid rgba(148,163,184,0.18); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <span style="font-size:0.83rem; color:#cbd5e1;">⏱️ <strong>Chỉnh lệch thời gian Sub:</strong> <strong id="sub-offset-val" style="color:#fde047;">0.0s</strong></span>
+            <div style="display:flex; gap:5px; flex-wrap:wrap;">
+              <button type="button" class="btn-secondary" style="padding:5px 9px; font-size:0.76rem;" onclick="adjustSubOffset(-2.0)">-2.0s</button>
+              <button type="button" class="btn-secondary" style="padding:5px 9px; font-size:0.76rem;" onclick="adjustSubOffset(-0.5)">-0.5s</button>
+              <button type="button" class="btn-secondary" style="padding:5px 9px; font-size:0.76rem; color:#6ee7b7;" onclick="adjustSubOffset(0, true)">0.0s</button>
+              <button type="button" class="btn-secondary" style="padding:5px 9px; font-size:0.76rem;" onclick="adjustSubOffset(0.5)">+0.5s</button>
+              <button type="button" class="btn-secondary" style="padding:5px 9px; font-size:0.76rem;" onclick="adjustSubOffset(2.0)">+2.0s</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT HALF: SMART DISK / RAM BUFFER & READ-AHEAD PRE-FETCHER ENGINE -->
+        <div style="background:rgba(15,23,42,0.75); border:1px solid rgba(56,189,248,0.35); border-radius:16px; padding:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+            <strong style="color:#38bdf8; font-size:0.96rem;">💿 Chế Độ Đệm Luồng Ổ Cứng / RAM (Chống Đứng Hình Khi Mạng Yếu)</strong>
+            <button class="btn-secondary" style="padding:5px 10px; font-size:0.76rem; color:#fcd34d;" onclick="clearServerRamBuffer()">🧹 Xóa File Đệm</button>
+          </div>
+
+          <!-- STORAGE BACKEND SWITCHER: DISK (DEFAULT) VS RAM -->
+          <div style="padding:10px 12px; border-radius:12px; background:rgba(30,41,59,0.78); border:1px solid rgba(16,185,129,0.35); margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+              <span style="font-size:0.82rem; color:#e2e8f0; font-weight:700;">💽 Nơi lưu trữ bộ đệm tải trước:</span>
+              <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                <button type="button" id="buf-storage-disk" class="btn-secondary" style="padding:5px 11px; font-size:0.78rem; border-color:#10b981; background:rgba(16,185,129,0.2); color:#6ee7b7;" onclick="setBufferStorageType('disk')">
+                  💿 Lưu trên Ổ Cứng (Không tốn RAM)
+                </button>
+                <button type="button" id="buf-storage-ram" class="btn-secondary" style="padding:5px 11px; font-size:0.78rem;" onclick="setBufferStorageType('ram')">
+                  ⚡ Lưu trên RAM
+                </button>
+              </div>
+            </div>
+            <div id="buf-disk-dir-row" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <span style="font-size:0.75rem; color:#94a3b8;">📁 Thư mục đệm ổ cứng:</span>
+              <input type="text" id="buf-disk-dir-input" placeholder="Mặc định: ./stream_cache" style="flex:1; min-width:180px; padding:5px 9px; font-size:0.76rem; border-radius:8px;" />
+              <button type="button" class="btn-secondary" style="padding:5px 10px; font-size:0.75rem; color:#38bdf8;" onclick="saveCustomBufferConfig()">Lưu đường dẫn</button>
+            </div>
+          </div>
+
+          <p style="font-size:0.8rem; color:#94a3b8; line-height:1.42; margin-bottom:12px;">
+            Máy tính sẽ chủ động <strong>tải trước hàng loạt phân đoạn video (.TS / .MP4) vào Ổ cứng (hoặc RAM)</strong> bằng nhiều luồng song song, tự động xóa file cũ khi đầy và nối lại khi mạng chập chờn.
+          </p>
+
+          <!-- 3 BUFFER MODE CARDS -->
+          <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:14px;">
+            <button type="button" id="buf-mode-normal" class="btn-secondary" style="flex-direction:column; align-items:flex-start; padding:10px 12px; text-align:left; gap:4px; border-radius:12px;" onclick="selectBufferMode('normal')">
+              <strong style="color:#6ee7b7; font-size:0.84rem;">🟢 Mạng Ổn Định</strong>
+              <small style="color:#94a3b8; font-size:0.73rem; white-space:normal;">Đệm trước 3 đoạn (~12s) • Tối đa 250MB</small>
             </button>
-            <button class="btn-cast" id="btn-yt-play-direct" style="background:linear-gradient(135deg,#8b5cf6,#3b82f6); flex:1; justify-content:center;" onclick="playDirectYouTubeInput(this)">
-              ▶️ Phát Ngay Ô Này Lên TV
+            <button type="button" id="buf-mode-weak_net" class="btn-secondary" style="flex-direction:column; align-items:flex-start; padding:10px 12px; text-align:left; gap:4px; border-radius:12px; border-color:#38bdf8; background:rgba(56,189,248,0.16);" onclick="selectBufferMode('weak_net')">
+              <strong style="color:#38bdf8; font-size:0.84rem;">🟡 Mạng Yếu (Khuyên dùng)</strong>
+              <small style="color:#cbd5e1; font-size:0.73rem; white-space:normal;">Đệm trước 10 đoạn (~45s) • Tối đa 800MB</small>
             </button>
-            <button class="btn-secondary" style="color:#6ee7b7; border-color:rgba(16,185,129,0.45); flex:1; justify-content:center;" onclick="addCurrentInputUrlToPlaylist(this)">
-              ➕ Thêm Ô Này Vào Danh Sách
+            <button type="button" id="buf-mode-ultra" class="btn-secondary" style="flex-direction:column; align-items:flex-start; padding:10px 12px; text-align:left; gap:4px; border-radius:12px;" onclick="selectBufferMode('ultra')">
+              <strong style="color:#f472b6; font-size:0.84rem;">🔥 Siêu Đệm Cực Đại</strong>
+              <small style="color:#94a3b8; font-size:0.73rem; white-space:normal;">Đệm trước 20 đoạn (~90s) • Tối đa 2048MB</small>
             </button>
           </div>
 
-          <div id="yt-results-wrap" style="display:block; margin-top:20px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
-              <label style="color:#fca5a5; font-size:0.95rem; margin:0;" id="yt-results-label">🎬 Kết quả tìm kiếm YouTube (Bấm Tìm Kiếm để hiển thị):</label>
-              <button class="btn-secondary" style="padding:7px 14px; font-size:0.82rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45);" onclick="addAllYtResultsToPlaylist()">
-                📥 Thêm Tất Cả Kết Quả Này Vào Danh Sách Phát
-              </button>
+          <!-- FINE-GRAINED BUFFER SLIDERS -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:5px;">
+              <span style="color:#e2e8f0;">🚀 <strong>Số phân đoạn HLS (.TS) tải trước song song:</strong></span>
+              <strong id="buf-prefetch-val" style="color:#38bdf8;">10 phân đoạn (~45 giây)</strong>
             </div>
-            <div class="stream-list" id="yt-results-list" style="max-height:75vh;">
-              <div style="color:var(--muted); font-size:0.9rem; text-align:center; padding:26px;">
-                Gõ tên bài hát, danh sách nhạc Lofi, hoặc bộ phim lẻ vào ô trên rồi nhấn <strong>🔎 Tìm Kiếm / Bóc Tách YouTube</strong>!
-              </div>
+            <input type="range" id="buf-prefetch-slider" min="0" max="40" step="1" value="10" oninput="document.getElementById('buf-prefetch-val').textContent = this.value + ' phân đoạn (~' + (this.value * 4) + ' giây)'" onchange="saveCustomBufferConfig()" style="width:100%;" />
+          </div>
+
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:5px;">
+              <span id="buf-limit-label" style="color:#e2e8f0;">💿 <strong>Dung lượng bộ đệm Ổ Cứng tối đa (Tự xóa file cũ):</strong></span>
+              <strong id="buf-ram-val" style="color:#6ee7b7;">800 MB</strong>
+            </div>
+            <input type="range" id="buf-ram-slider" min="64" max="4096" step="64" value="800" oninput="document.getElementById('buf-ram-val').textContent = this.value + ' MB'" onchange="saveCustomBufferConfig()" style="width:100%;" />
+          </div>
+
+          <!-- LIVE BUFFER TELEMETRY BOX -->
+          <div style="padding:10px 12px; border-radius:10px; background:rgba(30,41,59,0.75); border:1px solid rgba(56,189,248,0.25); display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; text-align:center;">
+            <div>
+              <div id="stat-storage-title" style="font-size:0.72rem; color:#94a3b8;">ĐÃ LƯU TRÊN Ổ CỨNG</div>
+              <strong id="stat-ram-mb" style="font-size:0.95rem; color:#38bdf8;">0.0 MB</strong>
+            </div>
+            <div>
+              <div style="font-size:0.72rem; color:#94a3b8;">PHÂN ĐOẠN ĐỆM TRƯỚC</div>
+              <strong id="stat-segs" style="font-size:0.95rem; color:#6ee7b7;">0 đoạn</strong>
+            </div>
+            <div>
+              <div style="font-size:0.72rem; color:#94a3b8;">PHỤC VỤ TỨC THÌ (0ms)</div>
+              <strong id="stat-hits" style="font-size:0.95rem; color:#fde047;">0 lần</strong>
             </div>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- RIGHT COLUMN OF YOUTUBE TAB: FULL-HEIGHT PLAYLIST & LOOP JUKEBOX -->
-      <div id="yt-playlist-dock">
-        <div id="episodes-wrap" class="card" style="display:block; border-color:rgba(59,130,246,0.45);">
-          <div class="card-title" style="flex-wrap:wrap; gap:10px;">
-            <span style="color:#93c5fd;" id="episodes-title">📋 Danh sách phát đồng bộ chung (0 mục)</span>
+    <!-- ========================================================================== -->
+    <!-- TAB 1: DEDICATED YOUTUBE STUDIO (FULL WIDTH, SINGLE RESULT LIST)           -->
+    <!-- ========================================================================== -->
+    <div id="tab-pane-yt" style="display:block;">
+      <div class="card" style="border-color: rgba(239, 68, 68, 0.45);">
+        <div class="card-title">
+          <span>🔴 Tìm Kiếm YouTube Hoặc Dán Link Video / Playlist YouTube</span>
+          <button class="btn-secondary" style="padding:7px 12px; font-size:0.8rem; background:linear-gradient(135deg,#10b981,#059669); color:#fff; border:none;" onclick="openYouTubeInWvcBrowser(this)">
+            🌐 Mở YouTube Trong Trình Duyệt WVC (Tự Bắt Khi Click Video)
+          </button>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+          <input
+            type="text"
+            id="yt-query"
+            placeholder="Nhập tên bài hát, nhạc Lofi, bộ phim trên YouTube HOẶC dán link https://www.youtube.com/watch?v=..."
+            style="flex:1; min-width:260px; font-size:1rem; padding:14px 16px;"
+            onkeydown="if(event.key==='Enter') searchYouTube();"
+          />
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn-cast" id="btn-yt-search" style="background:linear-gradient(135deg,#ef4444,#ec4899); flex:1; justify-content:center;" onclick="searchYouTube()">
+            🔎 Tìm Kiếm / Bóc Tách YouTube
+          </button>
+          <button class="btn-cast" id="btn-yt-play-direct" style="background:linear-gradient(135deg,#8b5cf6,#3b82f6); flex:1; justify-content:center;" onclick="playDirectYouTubeInput(this)">
+            ▶️ Phát Ngay Ô Này Lên TV
+          </button>
+          <button class="btn-secondary" style="color:#6ee7b7; border-color:rgba(16,185,129,0.45); flex:1; justify-content:center;" onclick="addCurrentInputUrlToPlaylist(this)">
+            ➕ Thêm Ô Này Vào Danh Sách
+          </button>
+        </div>
+
+        <div id="yt-results-wrap" style="display:block; margin-top:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+            <label style="color:#fca5a5; font-size:0.95rem; margin:0;" id="yt-results-label">🎬 Kết quả tìm kiếm YouTube (Bấm Tìm Kiếm để hiển thị):</label>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <button class="btn-secondary" style="padding:6px 11px; font-size:0.78rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45);" onclick="syncStateFromServer(this)" title="Đồng bộ tức thì giữa Máy Tính và Điện Thoại">🔄 Đồng Bộ PC ↔ ĐT</button>
-              <button class="btn-cast" style="padding:7px 14px; font-size:0.83rem;" onclick="playEpisodeIndex(0)">▶️ Phát Từ Đầu DS</button>
-              <button class="btn-secondary" style="padding:6px 11px; font-size:0.78rem; color:#fca5a5;" onclick="clearPlaylistQueue()">🧹 Xóa trống DS</button>
+              <button class="btn-secondary" style="padding:7px 14px; font-size:0.82rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45);" onclick="addAllYtResultsToPlaylist()">
+                📥 Thêm Tất Cả Vào DS
+              </button>
+              <button class="btn-secondary" style="padding:7px 14px; font-size:0.82rem; color:#93c5fd; border-color:rgba(59,130,246,0.45);" onclick="switchMainTab('playlist')">
+                📋 Mở Tab Danh Sách Phát
+              </button>
+              <button class="btn-secondary" style="padding:7px 12px; font-size:0.82rem; color:#fca5a5; border-color:rgba(239,68,68,0.4);" onclick="clearYtResults()" title="Xóa trắng danh sách kết quả tìm kiếm">
+                🧹 Xóa Kết Quả
+              </button>
+            </div>
+          </div>
+          <div class="stream-list" id="yt-results-list" style="max-height:72vh;">
+            <div style="color:var(--muted); font-size:0.9rem; text-align:center; padding:26px;">
+              Gõ tên bài hát, danh sách nhạc Lofi, hoặc bộ phim lẻ vào ô trên rồi nhấn <strong>🔎 Tìm Kiếm / Bóc Tách YouTube</strong>!
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================================================== -->
+    <!-- TAB 3: DEDICATED FULL-WIDTH PLAYLIST TAB (SINGLE SOURCE OF TRUTH)          -->
+    <!-- ========================================================================== -->
+    <div id="tab-pane-playlist" style="display:none;">
+      <div id="episodes-wrap" class="card" style="display:block; border-color:rgba(59,130,246,0.45);">
+        <div class="card-title" style="flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <span style="color:#93c5fd;" id="episodes-title">📋 Danh sách phát đồng bộ chung (0 mục)</span>
+            <label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:#6ee7b7; font-size:0.84rem; margin:0;">
+              <input type="checkbox" id="auto-next-cb" checked onchange="toggleAutoNext(this.checked)" />
+              🔄 <strong>Tự Next</strong>
+            </label>
+            <select id="loop-mode-select" onchange="changeLoopMode(this.value)" style="width:auto; padding:6px 10px; font-size:0.82rem; border-radius:8px; background:#0f172a; color:#f9a8d4; border:1px solid rgba(236,72,153,0.45);">
+              <option value="all">🔁 Lặp cả DS</option>
+              <option value="one">🔂 Lặp 1 bài</option>
+              <option value="off">➡️ Phát hết rồi dừng</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn-secondary" style="padding:6px 11px; font-size:0.78rem; color:#c4b5fd; border-color:rgba(139,92,246,0.45);" onclick="togglePlaylistAdvDrawer()">
+              ⚙️ Ẩn/Hiện Cài Đặt Intro & Lưu DS
+            </button>
+            <button class="btn-secondary" style="padding:6px 11px; font-size:0.78rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45);" onclick="syncStateFromServer(this)" title="Đồng bộ tức thì giữa Máy Tính và Điện Thoại">🔄 Đồng Bộ PC ↔ ĐT</button>
+            <button class="btn-cast" style="padding:7px 14px; font-size:0.83rem;" onclick="playEpisodeIndex(0)">▶️ Phát Từ Đầu DS</button>
+            <button class="btn-secondary" style="padding:6px 11px; font-size:0.78rem; color:#fca5a5;" onclick="clearPlaylistQueue()">🧹 Xóa trống DS</button>
+          </div>
+        </div>
+
+        <!-- COLLAPSIBLE ADVANCED DRAWER: AUTO-SKIP INTRO/OUTRO + SAVE/LOAD PLAYLISTS -->
+        <div id="playlist-adv-drawer" style="display:none; margin-bottom:14px; padding:12px 14px; border-radius:12px; background:linear-gradient(135deg, rgba(30,41,59,0.92), rgba(15,23,42,0.95)); border:1px solid rgba(139,92,246,0.4);">
+          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+            <span style="color:#c4b5fd; font-weight:700; font-size:0.88rem;">⏭️ Tự Động Bỏ Qua Giới Thiệu Phim (Intro / Outro) & SponsorBlock</span>
+            <label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; color:#93c5fd; font-size:0.82rem; margin:0;" title="Tự động tua qua đoạn giới thiệu, quảng cáo tài trợ trong video YouTube">
+              <input type="checkbox" id="sponsorblock-cb" checked onchange="onSkipControlsChange()" />
+              🛡️ <strong>YouTube SponsorBlock</strong>
+            </label>
+          </div>
+
+          <div class="row-2" style="gap:10px; margin-bottom:12px;">
+            <!-- Skip Intro -->
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:8px 10px; border-radius:10px; background:rgba(15,23,42,0.75); border:1px solid rgba(255,255,255,0.06);">
+              <label style="display:inline-flex; align-items:center; gap:7px; cursor:pointer; color:#f8fafc; font-size:0.84rem; margin:0;">
+                <input type="checkbox" id="skip-intro-enable-cb" onchange="onToggleSkipIntroCheckbox(this.checked)" />
+                ⏩ <strong>Bỏ qua Intro:</strong>
+              </label>
+              <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+                <input type="number" id="skip-intro-min" min="0" max="30" value="1" onchange="onSkipIntroTimeInput()" style="width:52px; padding:5px 6px; font-size:0.84rem; text-align:center; border-radius:8px;" />
+                <span style="font-size:0.78rem; color:#cbd5e1;">p</span>
+                <input type="number" id="skip-intro-sec" min="0" max="59" value="30" onchange="onSkipIntroTimeInput()" style="width:52px; padding:5px 6px; font-size:0.84rem; text-align:center; border-radius:8px;" />
+                <span style="font-size:0.78rem; color:#cbd5e1;">s</span>
+                <button type="button" class="btn-secondary" style="padding:4px 7px; font-size:0.73rem;" onclick="setSkipPreset('intro', 1, 30)">1p30s</button>
+                <button type="button" class="btn-secondary" style="padding:4px 7px; font-size:0.73rem;" onclick="setSkipPreset('intro', 2, 0)">2p00s</button>
+              </div>
+            </div>
+
+            <!-- Skip Outro -->
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:8px 10px; border-radius:10px; background:rgba(15,23,42,0.75); border:1px solid rgba(255,255,255,0.06);">
+              <label style="display:inline-flex; align-items:center; gap:7px; cursor:pointer; color:#f8fafc; font-size:0.84rem; margin:0;">
+                <input type="checkbox" id="skip-outro-enable-cb" onchange="onToggleSkipOutroCheckbox(this.checked)" />
+                ⏭️ <strong>Bỏ qua Outro:</strong>
+              </label>
+              <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+                <input type="number" id="skip-outro-min" min="0" max="30" value="1" onchange="onSkipOutroTimeInput()" style="width:52px; padding:5px 6px; font-size:0.84rem; text-align:center; border-radius:8px;" />
+                <span style="font-size:0.78rem; color:#cbd5e1;">p</span>
+                <input type="number" id="skip-outro-sec" min="0" max="59" value="30" onchange="onSkipOutroTimeInput()" style="width:52px; padding:5px 6px; font-size:0.84rem; text-align:center; border-radius:8px;" />
+                <span style="font-size:0.78rem; color:#cbd5e1;">s</span>
+                <button type="button" class="btn-secondary" style="padding:4px 7px; font-size:0.73rem;" onclick="setSkipPreset('outro', 1, 30)">1p30s</button>
+                <button type="button" class="btn-secondary" style="padding:4px 7px; font-size:0.73rem;" onclick="setSkipPreset('outro', 2, 0)">2p00s</button>
+              </div>
             </div>
           </div>
 
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:14px; padding:10px 14px; border-radius:12px; background:rgba(15,23,42,0.9); border:1px solid rgba(148,163,184,0.2);">
-            <label style="display:inline-flex; align-items:center; gap:7px; cursor:pointer; color:#6ee7b7; font-size:0.88rem; margin:0;">
-              <input type="checkbox" id="auto-next-cb" checked onchange="toggleAutoNext(this.checked)" />
-              🔄 <strong>Tự động Next khi hết bài/tập</strong>
-            </label>
-            <select id="loop-mode-select" onchange="changeLoopMode(this.value)" style="width:auto; padding:7px 12px; font-size:0.85rem; border-radius:8px; background:#0f172a; color:#f9a8d4; border:1px solid rgba(236,72,153,0.45);">
-              <option value="all">🔁 Lặp lại cả danh sách (Nghe/Xem đi nghe lại)</option>
-              <option value="one">🔂 Lặp lại 1 bài / 1 tập hiện tại</option>
-              <option value="off">➡️ Phát hết danh sách rồi dừng</option>
-            </select>
-          </div>
-
           <!-- Save / Load Named Playlists Row -->
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.08);">
-            <input type="text" id="save-playlist-name" placeholder="Đặt tên danh sách (VD: Nhạc Lofi Nghe Đi Nghe Lại, Phim Bộ...)" style="flex:1; min-width:190px; padding:9px 12px; font-size:0.85rem;" />
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:10px; border-top:1px solid rgba(255,255,255,0.08);">
+            <input type="text" id="save-playlist-name" placeholder="Đặt tên danh sách (VD: Nhạc Lofi, Phim Bộ...)" style="flex:1; min-width:190px; padding:8px 12px; font-size:0.84rem;" />
             <button class="btn-secondary" style="padding:8px 13px; font-size:0.82rem; color:#6ee7b7;" onclick="saveCurrentPlaylist()">💾 Lưu DS</button>
             <select id="saved-playlists-select" style="width:auto; min-width:170px; padding:8px 11px; font-size:0.84rem; border-radius:8px; background:#0f172a; color:#fff; border:1px solid rgba(148,163,184,0.3);">
               <option value="">-- 📂 Danh sách đã lưu --</option>
@@ -684,48 +956,44 @@
             <button class="btn-cast" style="padding:8px 13px; font-size:0.82rem;" onclick="loadSelectedPlaylist(true)">▶️ Nạp & Phát</button>
             <button class="btn-secondary" style="padding:8px 10px; font-size:0.82rem;" onclick="deleteSelectedPlaylist()">🗑️</button>
           </div>
+        </div>
 
-          <div id="episodes-grid" style="display:flex; flex-direction:column; gap:9px; max-height:70vh; overflow-y:auto; overflow-x:hidden; padding-right:4px;">
-            <div style="color:var(--muted); font-size:0.88rem; padding:22px; text-align:center;">
-              Danh sách phát đang trống. Hãy tìm video YouTube bên trái rồi bấm <strong>➕ Thêm vào DS</strong>!
-            </div>
+        <div id="episodes-grid" style="display:flex; flex-direction:column; gap:9px; max-height:72vh; overflow-y:auto; overflow-x:hidden; padding-right:4px;">
+          <div style="color:var(--muted); font-size:0.88rem; padding:22px; text-align:center;">
+            Danh sách phát đang trống. Hãy thêm video từ Tab <strong>🔴 Tìm YouTube</strong> hoặc Tab <strong>🎬 Phim Web & Ổ Cứng</strong>!
           </div>
         </div>
       </div>
     </div>
 
-    <!-- DEDICATED FULL-WIDTH PLAYLIST TAB PANE (ESPECIALLY CONVENIENT ON MOBILE) -->
-    <div id="tab-pane-playlist" style="display:none;">
-      <div id="dedicated-playlist-dock"></div>
-    </div>
-
     <!-- ========================================================================== -->
-    <!-- TAB 2: WEB MOVIE EXTRACTOR, WVC BROWSER & LOCAL FILE CASTER                -->
+    <!-- TAB 2: UNIFIED WEB MOVIE EXTRACTOR & LOCAL FILE CASTER (1 INPUT + 1 LIST)  -->
     <!-- ========================================================================== -->
     <div id="tab-pane-web" class="grid-main" style="display:none;">
-      <!-- LEFT COLUMN -->
+      <!-- LEFT COLUMN: UNIFIED SOURCE INPUT (WEB + .M3U8/.MP4 + LOCAL DISK PATH) -->
       <div>
         <div class="card">
           <div class="card-title">
-            <span>🚀 Bắn Link Video & Bóc Tách Độ Phân Giải / Thời Lượng / Phụ Đề</span>
-            <a href="/tv" target="_blank" class="btn btn-secondary" style="padding:7px 13px; font-size:0.8rem;">📺 Mở Màn Hình TV Thử Nghiệm</a>
+            <span>🚀 Nguồn Phát Hợp Nhất (Web Xem Phim / .M3U8 / .MP4 / File Ổ Cứng)</span>
+            <a href="/tv" target="_blank" class="btn btn-secondary" style="padding:6px 11px; font-size:0.78rem;">📺 Mở Màn Hình TV Thử Nghiệm</a>
           </div>
 
           <div class="form-group">
-            <label>Dán Link Trang Web Xem Phim (vd: cobephim.icu...), Link .m3u8/.mp4 HOẶC Đường dẫn File ổ cứng:</label>
-            <input type="text" id="media-url" placeholder="https://cobephim.icu/phim/... hoặc https://.../index.m3u8 hoặc I:\tv show\..." />
+            <label>Dán Link Trang Web Phim (vd: cobephim.icu...), Link .m3u8/.mp4 HOẶC Đường dẫn File trong Ổ Cứng (vd: I:\movies\phim.mkv):</label>
+            <input type="text" id="media-url" placeholder="https://cobephim.icu/phim/... hoặc https://.../index.m3u8 hoặc I:\tv show\tap1.mkv" />
           </div>
 
           <div class="row-2">
             <div class="form-group">
               <label>Tiêu đề hiển thị trên TV (Tùy chọn):</label>
-              <input type="text" id="media-title" placeholder="Tự động lấy tên phim..." />
+              <input type="text" id="media-title" placeholder="Tự động lấy tên phim / tên file..." />
             </div>
             <div class="form-group">
-              <label>Link Phụ đề rời .SRT / .VTT (Hoặc bấm chọn từ danh sách phụ đề bắt được):</label>
-              <div style="display:flex; gap:8px;">
-                <input type="text" id="sub-url" placeholder="https://.../vietnamese.vtt hoặc .srt" />
-                <button class="btn-secondary" style="white-space:nowrap; padding:10px 14px;" onclick="beamSubtitleNow()" title="Bắn phụ đề này thẳng lên TV đang phát">💬 Bắn Sub Lên TV</button>
+              <label>Link Phụ đề rời .SRT / .VTT (Hoặc mở Tab Phụ đề để tải file):</label>
+              <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                <input type="text" id="sub-url" placeholder="https://.../vietnamese.vtt hoặc .srt" style="flex:1; min-width:140px;" />
+                <button class="btn-secondary" style="white-space:nowrap; padding:10px 11px;" onclick="beamSubtitleNow()" title="Bắn phụ đề này thẳng lên TV đang phát">💬 Bắn Sub</button>
+                <button class="btn-secondary" style="white-space:nowrap; padding:10px 11px; color:#fde047; border-color:rgba(250,204,21,0.45);" onclick="switchMainTab('subbuf')" title="Chuyển sang Tab 4 để chỉnh cỡ chữ, màu sắc & tải file .SRT">🎨 Cỡ Chữ</button>
               </div>
             </div>
           </div>
@@ -746,95 +1014,46 @@
           <div class="checkbox-row">
             <label>
               <input type="checkbox" id="use-proxy" checked />
-              🛡️ <strong>Proxy luồng qua PC</strong> (Bẻ khóa CORS, Referer & gọt vỏ PNG giả dạng .TS)
+              🛡️ <strong>Proxy & Đệm Luồng qua PC</strong> (Bẻ khóa CORS, Referer & gọt vỏ PNG giả dạng .TS)
             </label>
             <label>
               <input type="checkbox" id="deep-browser" checked />
-              🕵️ Dùng Chromium ngầm (Playwright) khi bóc tách web phim phức tạp
+              🕵️ Dùng Chromium ngầm (Playwright) khi bóc tách web phim
             </label>
           </div>
 
           <div class="btn-row">
             <button class="btn-cast" onclick="castDirect()">▶️ PHÁT LÊN TV NGAY</button>
-            <button class="btn-sniff" id="btn-extract" onclick="extractStreams()">🔍 BÓC TÁCH LINK VIDEO & PHỤ ĐỀ (.SRT/.VTT)</button>
-            <button class="btn-secondary" id="btn-open-browser" style="background:linear-gradient(135deg,#10b981,#059669); color:#fff; border:none;" onclick="openInteractiveBrowser(this)">🌐 Mở Trình Duyệt WVC Nhúng (Chặn Quảng Cáo & Bắt Khi Play)</button>
+            <button class="btn-sniff" id="btn-extract" onclick="extractStreams()">🔍 BÓC TÁCH WEB PHIM</button>
+            <button class="btn-secondary" id="btn-open-browser" style="background:linear-gradient(135deg,#10b981,#059669); color:#fff; border:none;" onclick="openInteractiveBrowser(this)">🌐 Mở Trình Duyệt WVC Nhúng</button>
             <button class="btn-secondary" onclick="scanDlna()">📡 Quét TV DLNA</button>
-          </div>
-
-          <!-- EXTRACTED VIDEO STREAMS -->
-          <div id="extract-results-wrap" style="display:none; margin-top:22px;">
-            <label style="color:#6ee7b7; font-size:0.92rem;">🎬 Các luồng Video bóc tách được (Đã đo Thời lượng & Độ phân giải chuẩn như App Điện Thoại):</label>
-            <div class="stream-list" id="extract-list"></div>
-          </div>
-
-          <!-- EXTRACTED SUBTITLES -->
-          <div id="extract-subs-wrap" style="display:none; margin-top:18px;">
-            <label style="color:#f9a8d4; font-size:0.92rem;">💬 Phụ đề (.SRT / .VTT) bóc tách được từ trang phim:</label>
-            <div class="stream-list" id="extract-subs-list" style="max-height:220px;"></div>
-          </div>
-        </div>
-
-        <!-- DOCK FOR EPISODES WHEN ON TAB 2 -->
-        <div id="web-playlist-dock"></div>
-
-        <!-- LOCAL PC FILE CASTER -->
-        <div class="card">
-          <div class="card-title">
-            <span>💻 Phát File Video Có Sẵn Trong Ổ Cứng Máy Tính (.MKV / .MP4) Lên TV</span>
-          </div>
-          <div style="display:flex; gap:12px;">
-            <input type="text" id="local-path" placeholder="Ví dụ: I:\tv show\goblin\[K-Zone].Goblin.E02.HD.KITES.VN.mkv" />
-            <button class="btn-cast" style="white-space:nowrap;" onclick="castLocalFile()">🚀 Phát File Lên TV</button>
           </div>
         </div>
       </div>
 
-      <!-- RIGHT COLUMN -->
+      <!-- RIGHT COLUMN: SINGLE UNIFIED STREAM & SUBTITLE LIST -->
       <div>
-        <!-- SNIFFED HISTORY FROM EXTENSION / BOOKMARKLET -->
         <div class="card">
           <div class="card-title">
-            <span>📡 Luồng Video Bắt Tự Động Từ Tab Trình Duyệt</span>
+            <span>📡 Danh Sách Luồng Video & Phụ Đề Bắt Được (Hợp Nhất)</span>
             <div style="display:flex; gap:8px; align-items:center;">
-              <small style="color:#6ee7b7; font-weight:600;">Đã lọc nhiễu & đo thời lượng</small>
-              <button class="btn-secondary" style="padding:5px 10px; font-size:0.75rem;" onclick="clearSniffedHistory()">🗑️ Xóa lịch sử</button>
+              <button class="btn-secondary" style="padding:5px 10px; font-size:0.75rem; color:#93c5fd;" onclick="switchMainTab('playlist')">📋 Xem DS Phát</button>
+              <button class="btn-secondary" style="padding:5px 10px; font-size:0.75rem;" onclick="clearSniffedHistory()">🗑️ Xóa danh sách</button>
             </div>
           </div>
-          <div class="stream-list" id="sniffed-list">
-            <div style="color:var(--muted); font-size:0.88rem; text-align:center; padding:18px;">
-              Chưa có luồng tự động nào. Khi bạn mở phim trên tab trình duyệt, các luồng <code>.m3u8</code> / <code>.mp4</code> sạch sẽ tự động hiện ở đây kèm Thời lượng & Độ phân giải!
+          <div class="stream-list" id="sniffed-list" style="max-height:56vh;">
+            <div style="color:var(--muted); font-size:0.88rem; text-align:center; padding:22px;">
+              Chưa có luồng video nào. Hãy bấm <strong>🔍 Bóc Tách Web Phim</strong> bên trái hoặc mở phim trong <strong>🌐 Trình Duyệt WVC Nhúng</strong> — mọi luồng <code>.m3u8</code> / <code>.mp4</code> sẽ hiện chung tại khung duy nhất này!
             </div>
           </div>
-        </div>
 
-        <!-- SNIFFED SUBTITLES FROM EXTENSION / EXTRACTOR -->
-        <div class="card">
-          <div class="card-title">
-            <span>💬 Phụ Đề Rời (.SRT / .VTT) Bắt Được</span>
-            <small style="color:#f9a8d4; font-weight:600;">Tự động convert WebVTT</small>
-          </div>
-          <div class="stream-list" id="sniffed-subs-list" style="max-height:240px;">
-            <div style="color:var(--muted); font-size:0.86rem; text-align:center; padding:14px;">
-              Chưa có phụ đề rời nào. Khi trang web tải file <code>.srt</code> hoặc <code>.vtt</code>, phụ đề sẽ hiện tại đây để bạn bắn lên TV 1 chạm!
+          <!-- UNIFIED SUBTITLES SECTION (AUTO-SHOWS ONLY WHEN SUBTITLES ARE DETECTED) -->
+          <div id="unified-subs-section" style="display:none; margin-top:16px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.08);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <strong style="color:#f9a8d4; font-size:0.88rem;">💬 Phụ đề (.SRT / .VTT) tìm thấy:</strong>
+              <small style="color:#94a3b8; font-size:0.75rem;">Tự động chuẩn hóa WebVTT Tiếng Việt</small>
             </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">
-            <span>📺 Hướng Dẫn Kết Nối TV</span>
-          </div>
-          <div class="step-box">
-            <strong>Cách 1 (App Web Video Caster Receiver trên TV):</strong><br/>
-            Mở app trên Tivi (hoặc <code>http://cast2tv.app</code>) và nhập mã <code id="guide-code">--</code>!
-          </div>
-          <div class="step-box" style="border-left-color: var(--blue);">
-            <strong>Cách 2 (Vào thẳng trình duyệt TV):</strong><br/>
-            Trên trình duyệt Tivi, mở <code id="guide-url">http://...</code>
-          </div>
-          <div class="step-box" style="border-left-color: var(--green);">
-            <strong>Cách 3 (Bookmarklet bắt link):</strong><br/>
-            Kéo nút <a id="bookmarklet-link" href="#" class="btn btn-cast" style="padding:4px 12px; font-size:0.8rem; border-radius:8px;">⚡ Bắn lên TV</a> thả vào <strong>Bookmarks Bar</strong>.
+            <div class="stream-list" id="sniffed-subs-list" style="max-height:200px; margin-top:6px;"></div>
           </div>
         </div>
       </div>
@@ -859,7 +1078,9 @@
         <button class="btn-cast" onclick="sendCtrl('play')">▶ Play</button>
         <button class="btn-secondary" onclick="sendCtrl('pause')">⏸ Pause</button>
         <button class="btn-secondary" onclick="sendCtrl('seek_rel', 15)">+15s ⏩</button>
+        <button class="btn-secondary" id="btn-manual-skip-intro" style="color:#c4b5fd; border-color:rgba(139,92,246,0.45);" onclick="manualSkipIntroNow()" title="Tua nhanh qua đoạn giới thiệu đầu phim">⏩ Qua Intro</button>
         <button class="btn-secondary" id="btn-next-ep" style="display:none; background:linear-gradient(135deg,#3b82f6,#8b5cf6); color:#fff; border:none;" onclick="playEpisodeDelta(1)">⏭ Tập tiếp</button>
+        <button class="btn-secondary" style="color:#fde047; border-color:rgba(250,204,21,0.45);" onclick="switchMainTab('subbuf')" title="Mở Tab 4: Chỉnh cỡ chữ Phụ đề, Màu sắc & Bộ đệm Ổ cứng">💬 Phụ đề & 💿 Buffer</button>
         <button class="btn-secondary" onclick="sendCtrl('stop')">⏹ Dừng</button>
         <select onchange="sendCtrl('rate', parseFloat(this.value))" style="padding:8px; border-radius:10px; background:#1e293b; color:#fff; border:1px solid #334155;">
           <option value="1">1.0x</option>
@@ -924,14 +1145,37 @@
     async function castDirect(overrideItem) {
       const url = overrideItem ? overrideItem.url : document.getElementById('media-url').value.trim();
       if (!url) {
-        alert('Vui lòng dán link video (.m3u8, .mp4), link trang web hoặc đường dẫn file!');
+        alert('Vui lòng dán link video (.m3u8, .mp4), link trang web hoặc đường dẫn file ổ cứng!');
+        return;
+      }
+
+      // If user pasted a local PC file path (e.g. I:\movies\phim.mkv) into #media-url, register & cast it directly!
+      const isLocalPath = !overrideItem && (/^[a-z]:[\\/]/i.test(url) || url.startsWith('\\\\'));
+      if (isLocalPath) {
+        const resLocal = await fetch('/api/register-local-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: url }),
+        });
+        if (!resLocal.ok) {
+          const err = await resLocal.json();
+          alert(err.detail || 'Không tìm thấy file trên ổ cứng!');
+          return;
+        }
+        const info = await resLocal.json();
+        await castDirect({
+          url: info.stream_url,
+          title: document.getElementById('media-title').value.trim() || info.name,
+          headers: {},
+          subtitles: info.subtitles || [],
+        });
         return;
       }
 
       // If user pasted a page URL (like https://cobephim.icu/phim/...) and clicked PHÁT LÊN TV NGAY directly,
       // auto-extract the main movie stream first and cast it!
       const low = url.toLowerCase().split('?')[0];
-      const isDirectMedia = low.endsWith('.m3u8') || low.endsWith('.mp4') || low.endsWith('.mkv') || low.endsWith('.webm') || /^[a-z]:[\\/]/i.test(url) || url.includes('/stream/local/');
+      const isDirectMedia = low.endsWith('.m3u8') || low.endsWith('.mp4') || low.endsWith('.mkv') || low.endsWith('.webm') || url.includes('/stream/local/');
       if (!overrideItem && !isDirectMedia) {
         await extractStreams(true);
         return;
@@ -981,7 +1225,7 @@
         return;
       }
       const btn = document.getElementById('btn-extract');
-      btn.textContent = '⏳ Đang bóc tách & đo thời lượng/độ phân giải...';
+      btn.textContent = '⏳ Đang bóc tách...';
       btn.disabled = true;
 
       try {
@@ -999,7 +1243,16 @@
         const subtitles = data.subtitles || [];
         renderExtractList(streams);
         renderExtractSubtitles(subtitles);
-        renderEpisodes(data.episodes || [], data.current_episode_index, data.auto_next_enabled);
+        renderEpisodes(
+          data.episodes || [],
+          data.current_episode_index,
+          data.auto_next_enabled,
+          data.loop_mode,
+          data.saved_playlists,
+          data.skip_intro_sec,
+          data.skip_outro_sec,
+          data.sponsorblock_enabled,
+        );
         if (subtitles.length > 0 && !document.getElementById('sub-url').value.trim()) {
           document.getElementById('sub-url').value = subtitles[0].url;
         }
@@ -1009,7 +1262,7 @@
       } catch (e) {
         alert('Lỗi bóc tách: ' + e);
       } finally {
-        btn.textContent = '🔍 BÓC TÁCH LINK VIDEO & PHỤ ĐỀ (.SRT/.VTT)';
+        btn.textContent = '🔍 BÓC TÁCH WEB PHIM';
         btn.disabled = false;
       }
     }
@@ -1022,49 +1275,21 @@
     }
 
     function renderExtractList(streams) {
-      const wrap = document.getElementById('extract-results-wrap');
-      const list = document.getElementById('extract-list');
-      wrap.style.display = 'block';
-      list.innerHTML = '';
-
-      if (!streams.length) {
-        list.innerHTML = '<div style="color:#f87171; padding:12px;">Không tìm thấy luồng trực tiếp. Hãy thử bật Chromium ngầm hoặc mở trang phim trên tab trình duyệt!</div>';
+      const list = document.getElementById('sniffed-list');
+      if (!list) return;
+      if (!streams || !streams.length) {
+        if (list.querySelector('div[style*="text-align:center"]')) {
+          list.innerHTML = '<div style="color:#f87171; padding:12px;">Không tìm thấy luồng trực tiếp. Hãy thử bật Chromium ngầm hoặc mở trang phim bằng Trình Duyệt WVC Nhúng!</div>';
+        }
         return;
       }
-
-      streams.forEach((st) => {
-        const div = document.createElement('div');
-        div.className = 'stream-item' + (st.is_main_movie ? ' main-movie' : '');
-        const dispUrl = st.display_url || st.url;
-        div.innerHTML = `
-          <div class="stream-meta">
-            <strong>${st.title || 'Stream'}</strong>
-            <div class="badge-row">${buildStreamBadgesHtml(st)}</div>
-            <small title="${st.url}">${formatShortUrl(dispUrl)}</small>
-          </div>
-          <div style="display:flex; gap:6px; flex-shrink:0;">
-            <button class="btn-secondary btn-add-ds" style="padding:8px 11px; font-size:0.8rem; color:#6ee7b7; border-color:rgba(16,185,129,0.4); white-space:nowrap;">➕ Thêm DS</button>
-            <button class="btn-cast btn-play-tv" style="padding:9px 14px; font-size:0.84rem; white-space:nowrap;">▶️ Phát Lên TV</button>
-          </div>
-        `;
-        div.querySelector('.btn-add-ds').onclick = (e) => addItemsToPlaylist([st], false, e.currentTarget);
-        div.querySelector('.btn-play-tv').onclick = () => castDirect(st);
-        list.appendChild(div);
-      });
+      // Prepend extracted streams into the single unified stream list on the right column
+      [...streams].reverse().forEach((st) => prependSniffedItem(st));
     }
 
     function renderExtractSubtitles(subs) {
-      const wrap = document.getElementById('extract-subs-wrap');
-      const list = document.getElementById('extract-subs-list');
-      if (!subs || !subs.length) {
-        wrap.style.display = 'none';
-        return;
-      }
-      wrap.style.display = 'block';
-      list.innerHTML = '';
-      subs.forEach((sub) => {
-        list.appendChild(createSubtitleElement(sub));
-      });
+      if (!subs || !subs.length) return;
+      subs.forEach((sub) => prependSniffedSubtitle(sub));
     }
 
     function createSubtitleElement(sub) {
@@ -1105,49 +1330,32 @@
       }
     }
 
+    function togglePlaylistAdvDrawer() {
+      const dr = document.getElementById('playlist-adv-drawer');
+      if (!dr) return;
+      dr.style.display = dr.style.display === 'none' ? 'block' : 'none';
+    }
+
     function switchMainTab(tabName) {
       const paneYt = document.getElementById('tab-pane-yt');
       const paneWeb = document.getElementById('tab-pane-web');
       const panePl = document.getElementById('tab-pane-playlist');
+      const paneSub = document.getElementById('subbuf-studio-wrap');
+
       const btnYt = document.getElementById('tab-btn-yt');
       const btnWeb = document.getElementById('tab-btn-web');
       const btnPl = document.getElementById('tab-btn-playlist');
-      const epWrap = document.getElementById('episodes-wrap');
-      const ytDock = document.getElementById('yt-playlist-dock');
-      const webDock = document.getElementById('web-playlist-dock');
-      const plDock = document.getElementById('dedicated-playlist-dock');
+      const btnSub = document.getElementById('tab-btn-subbuf');
 
-      if (tabName === 'yt') {
-        paneYt.style.display = 'grid';
-        paneWeb.style.display = 'none';
-        if (panePl) panePl.style.display = 'none';
-        btnYt.className = 'tab-btn active-yt';
-        btnWeb.className = 'tab-btn';
-        if (btnPl) btnPl.className = 'tab-btn';
-        if (epWrap && ytDock && epWrap.parentElement !== ytDock) {
-          ytDock.appendChild(epWrap);
-        }
-      } else if (tabName === 'playlist') {
-        paneYt.style.display = 'none';
-        paneWeb.style.display = 'none';
-        if (panePl) panePl.style.display = 'block';
-        btnYt.className = 'tab-btn';
-        btnWeb.className = 'tab-btn';
-        if (btnPl) btnPl.className = 'tab-btn active-web';
-        if (epWrap && plDock && epWrap.parentElement !== plDock) {
-          plDock.appendChild(epWrap);
-        }
-      } else {
-        paneYt.style.display = 'none';
-        paneWeb.style.display = 'grid';
-        if (panePl) panePl.style.display = 'none';
-        btnYt.className = 'tab-btn';
-        btnWeb.className = 'tab-btn active-web';
-        if (btnPl) btnPl.className = 'tab-btn';
-        if (epWrap && webDock && epWrap.parentElement !== webDock) {
-          webDock.appendChild(epWrap);
-        }
-      }
+      if (paneYt) paneYt.style.display = (tabName === 'yt') ? 'block' : 'none';
+      if (paneWeb) paneWeb.style.display = (tabName === 'web') ? 'grid' : 'none';
+      if (panePl) panePl.style.display = (tabName === 'playlist') ? 'block' : 'none';
+      if (paneSub) paneSub.style.display = (tabName === 'subbuf') ? 'block' : 'none';
+
+      if (btnYt) btnYt.className = (tabName === 'yt') ? 'tab-btn active-yt' : 'tab-btn';
+      if (btnWeb) btnWeb.className = (tabName === 'web') ? 'tab-btn active-web' : 'tab-btn';
+      if (btnPl) btnPl.className = (tabName === 'playlist') ? 'tab-btn active-web' : 'tab-btn';
+      if (btnSub) btnSub.className = (tabName === 'subbuf') ? 'tab-btn active-web' : 'tab-btn';
     }
 
     async function openYouTubeInWvcBrowser(btnEl = null) {
@@ -1253,7 +1461,128 @@
       });
     }
 
-    function renderEpisodes(episodes, currentIdx = -1, autoNextEnabled = true, loopMode = null, savedPlaylists = null) {
+    let lastSavedIntroSec = 90;
+    let lastSavedOutroSec = 90;
+
+    function syncSkipUiFromServer(skipIntroSec, skipOutroSec, sponsorBlockEnabled) {
+      if (typeof sponsorBlockEnabled === 'boolean') {
+        const sbCb = document.getElementById('sponsorblock-cb');
+        if (sbCb) sbCb.checked = sponsorBlockEnabled;
+      }
+      if (typeof skipIntroSec === 'number' && !isNaN(skipIntroSec)) {
+        const introCb = document.getElementById('skip-intro-enable-cb');
+        const minEl = document.getElementById('skip-intro-min');
+        const secEl = document.getElementById('skip-intro-sec');
+        if (skipIntroSec > 0) {
+          lastSavedIntroSec = skipIntroSec;
+          if (introCb) introCb.checked = true;
+          if (minEl) minEl.value = Math.floor(skipIntroSec / 60);
+          if (secEl) secEl.value = skipIntroSec % 60;
+        } else {
+          if (introCb) introCb.checked = false;
+        }
+      }
+      if (typeof skipOutroSec === 'number' && !isNaN(skipOutroSec)) {
+        const outroCb = document.getElementById('skip-outro-enable-cb');
+        const minEl = document.getElementById('skip-outro-min');
+        const secEl = document.getElementById('skip-outro-sec');
+        if (skipOutroSec > 0) {
+          lastSavedOutroSec = skipOutroSec;
+          if (outroCb) outroCb.checked = true;
+          if (minEl) minEl.value = Math.floor(skipOutroSec / 60);
+          if (secEl) secEl.value = skipOutroSec % 60;
+        } else {
+          if (outroCb) outroCb.checked = false;
+        }
+      }
+    }
+
+    function getIntroInputsTotalSec() {
+      const m = Math.max(0, parseInt(document.getElementById('skip-intro-min')?.value || '0', 10) || 0);
+      const s = Math.max(0, parseInt(document.getElementById('skip-intro-sec')?.value || '0', 10) || 0);
+      return m * 60 + s;
+    }
+
+    function getOutroInputsTotalSec() {
+      const m = Math.max(0, parseInt(document.getElementById('skip-outro-min')?.value || '0', 10) || 0);
+      const s = Math.max(0, parseInt(document.getElementById('skip-outro-sec')?.value || '0', 10) || 0);
+      return m * 60 + s;
+    }
+
+    async function onToggleSkipIntroCheckbox(checked) {
+      let total = getIntroInputsTotalSec();
+      if (checked && total <= 0) {
+        total = lastSavedIntroSec || 90;
+        document.getElementById('skip-intro-min').value = Math.floor(total / 60);
+        document.getElementById('skip-intro-sec').value = total % 60;
+      }
+      await onSkipControlsChange();
+    }
+
+    async function onToggleSkipOutroCheckbox(checked) {
+      let total = getOutroInputsTotalSec();
+      if (checked && total <= 0) {
+        total = lastSavedOutroSec || 90;
+        document.getElementById('skip-outro-min').value = Math.floor(total / 60);
+        document.getElementById('skip-outro-sec').value = total % 60;
+      }
+      await onSkipControlsChange();
+    }
+
+    async function onSkipIntroTimeInput() {
+      const total = getIntroInputsTotalSec();
+      const cb = document.getElementById('skip-intro-enable-cb');
+      if (cb) cb.checked = total > 0;
+      if (total > 0) lastSavedIntroSec = total;
+      await onSkipControlsChange();
+    }
+
+    async function onSkipOutroTimeInput() {
+      const total = getOutroInputsTotalSec();
+      const cb = document.getElementById('skip-outro-enable-cb');
+      if (cb) cb.checked = total > 0;
+      if (total > 0) lastSavedOutroSec = total;
+      await onSkipControlsChange();
+    }
+
+    async function setSkipPreset(kind, mins, secs) {
+      if (kind === 'intro') {
+        document.getElementById('skip-intro-min').value = mins;
+        document.getElementById('skip-intro-sec').value = secs;
+        document.getElementById('skip-intro-enable-cb').checked = (mins * 60 + secs) > 0;
+      } else {
+        document.getElementById('skip-outro-min').value = mins;
+        document.getElementById('skip-outro-sec').value = secs;
+        document.getElementById('skip-outro-enable-cb').checked = (mins * 60 + secs) > 0;
+      }
+      await onSkipControlsChange();
+    }
+
+    async function onSkipControlsChange() {
+      const introChecked = Boolean(document.getElementById('skip-intro-enable-cb')?.checked);
+      const outroChecked = Boolean(document.getElementById('skip-outro-enable-cb')?.checked);
+      const sbChecked = Boolean(document.getElementById('sponsorblock-cb')?.checked);
+      const skip_intro_sec = introChecked ? getIntroInputsTotalSec() : 0;
+      const skip_outro_sec = outroChecked ? getOutroInputsTotalSec() : 0;
+      await fetch('/api/playlist/skip-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          skip_intro_sec,
+          skip_outro_sec,
+          sponsorblock_enabled: sbChecked,
+        }),
+      });
+    }
+
+    async function manualSkipIntroNow() {
+      const configured = getIntroInputsTotalSec();
+      const targetSec = configured > 0 ? configured : 90;
+      await sendCtrl('seek', targetSec);
+    }
+
+    function renderEpisodes(episodes, currentIdx = -1, autoNextEnabled = true, loopMode = null, savedPlaylists = null, skipIntroSec = undefined, skipOutroSec = undefined, sponsorBlockEnabled = undefined) {
+      syncSkipUiFromServer(skipIntroSec, skipOutroSec, sponsorBlockEnabled);
       const wrap = document.getElementById('episodes-wrap');
       const grid = document.getElementById('episodes-grid');
       const titleEl = document.getElementById('episodes-title');
@@ -1405,14 +1734,40 @@
             </div>
           </div>
           <div class="yt-action-col" style="display:flex; flex-direction:column; gap:8px; flex-shrink:0;">
-            <button class="btn-cast btn-play-now" style="padding:10px 16px; font-size:0.88rem; justify-content:center; white-space:nowrap;">▶️ Phát Lên TV</button>
-            <button class="btn-secondary btn-add-q" style="padding:9px 16px; font-size:0.84rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45); justify-content:center; white-space:nowrap;">➕ Thêm vào DS</button>
+            <div style="display:flex; gap:6px;">
+              <button class="btn-cast btn-play-now" style="padding:8px 14px; font-size:0.84rem; justify-content:center; white-space:nowrap; flex:1;">▶️ Phát TV</button>
+              <button class="btn-secondary btn-del-yt" style="padding:6px 10px; font-size:0.78rem; color:#fca5a5;" title="Xóa video này khỏi kết quả">✕</button>
+            </div>
+            <button class="btn-secondary btn-add-q" style="padding:8px 14px; font-size:0.82rem; color:#6ee7b7; border-color:rgba(16,185,129,0.45); justify-content:center; white-space:nowrap;">➕ Thêm vào DS</button>
           </div>
         `;
         div.querySelector('.btn-add-q').onclick = (e) => addItemsToPlaylist([it], false, e.currentTarget);
         div.querySelector('.btn-play-now').onclick = (e) => addItemsToPlaylist([it], true, e.currentTarget);
+        div.querySelector('.btn-del-yt').onclick = () => {
+          lastYtResults = lastYtResults.filter(r => r.url !== it.url);
+          div.remove();
+          const lbl = document.getElementById('yt-results-label');
+          if (lbl) lbl.textContent = `🎬 Kết quả tìm kiếm YouTube (${lastYtResults.length} video):`;
+        };
         list.appendChild(div);
       });
+    }
+
+    async function clearYtResults() {
+      lastYtResults = [];
+      const list = document.getElementById('yt-results-list');
+      const lbl = document.getElementById('yt-results-label');
+      if (lbl) lbl.textContent = '🎬 Kết quả tìm kiếm YouTube:';
+      if (list) {
+        list.innerHTML = `
+          <div style="color:var(--muted); font-size:0.9rem; text-align:center; padding:26px;">
+            Đã xóa sạch kết quả tìm kiếm. Gõ tên bài hát hoặc dán link YouTube để tìm kiếm lại!
+          </div>
+        `;
+      }
+      try {
+        await fetch('/api/youtube/clear', { method: 'POST' });
+      } catch (e) {}
     }
 
     async function addItemsToPlaylist(items, playNow = false, btnEl = null) {
@@ -1496,9 +1851,14 @@
     }
 
     async function clearPlaylistQueue() {
-      const res = await fetch('/api/playlist/clear', { method: 'POST' });
-      if (res.ok) {
-        renderEpisodes([], -1);
+      if (!confirm('Bạn có chắc chắn muốn XÓA TOÀN BỘ danh sách phát hiện tại?')) return;
+      try {
+        const res = await fetch('/api/playlist/clear', { method: 'POST' });
+        if (res.ok) {
+          renderEpisodes([], -1);
+        }
+      } catch (e) {
+        console.error('Clear playlist error:', e);
       }
     }
 
@@ -1550,7 +1910,11 @@
 
     async function deleteSelectedPlaylist() {
       const name = document.getElementById('saved-playlists-select').value;
-      if (!name) return;
+      if (!name) {
+        alert('Ô này để xóa "Danh sách đã lưu". Nếu bạn muốn xóa danh sách đang phát bên dưới, hãy bấm nút "🧹 Xóa trống DS" ở góc trên!');
+        return;
+      }
+      if (!confirm(`Bạn có chắc muốn xóa vĩnh viễn danh sách đã lưu "${name}"?`)) return;
       const res = await fetch('/api/playlist/delete-saved', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1633,7 +1997,334 @@
         url: info.stream_url,
         title: info.name,
         headers: {},
+        subtitles: info.subtitles || [],
       });
+    }
+
+    // =========================================================================
+    // SUBTITLE STYLING STUDIO & SMART RAM BUFFER ENGINE CONTROLS
+    // =========================================================================
+    let currentSubStyle = {
+      textSize: 1.5,
+      textColor: '#FFFF00',
+      backgroundColor: '#000000',
+      backgroundOpacity: 0.65,
+      edgeStyle: 'outline',
+      edgeColor: '#000000',
+      textFont: 'sans-serif',
+      textStyle: 'bold',
+      bottomPosition: 8,
+      offsetSec: 0.0,
+    };
+
+    let currentBufferConfig = {
+      mode: 'weak_net',
+      enabled: true,
+      prefetch_segments: 10,
+      max_ram_mb: 220,
+      mp4_readahead_mb: 28,
+      prebuffer_before_play: true,
+      hls_max_buffer_sec: 180,
+      concurrency: 4,
+    };
+
+    function toggleSubBufStudioModal(scrollToIt = false) {
+      switchMainTab('subbuf');
+    }
+
+    function hexToRgbaUi(hex, alpha) {
+      let c = (hex || '#000000').replace('#', '').trim();
+      if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+      const num = parseInt(c, 16);
+      const r = (num >> 16) & 255;
+      const g = (num >> 8) & 255;
+      const b = num & 255;
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function updateSubtitlePreviewBox() {
+      const box = document.getElementById('sub-preview-box');
+      if (!box) return;
+      const scale = Number(currentSubStyle.textSize) || 1.5;
+      const pct = Math.round(scale * 100);
+      box.textContent = `Phụ đề Tiếng Việt sắc nét — Cỡ chữ ${pct}% (${currentSubStyle.offsetSec >= 0 ? '+' : ''}${Number(currentSubStyle.offsetSec || 0).toFixed(1)}s)`;
+      box.style.fontSize = `${Math.max(12, Math.min(34, Math.round(scale * 13.5)))}px`;
+      box.style.color = currentSubStyle.textColor || '#FFFF00';
+      box.style.backgroundColor = hexToRgbaUi(currentSubStyle.backgroundColor || '#000000', currentSubStyle.backgroundOpacity ?? 0.65);
+      box.style.fontFamily = currentSubStyle.textFont || 'sans-serif';
+
+      const ts = currentSubStyle.textStyle || 'bold';
+      box.style.fontWeight = (ts === 'bold' || ts === 'bold_italic') ? '700' : '400';
+      box.style.fontStyle = (ts === 'italic' || ts === 'bold_italic') ? 'italic' : 'normal';
+
+      const ec = currentSubStyle.edgeColor || '#000000';
+      if (currentSubStyle.edgeStyle === 'outline') {
+        box.style.textShadow = `-1.5px -1.5px 0 ${ec}, 1.5px -1.5px 0 ${ec}, -1.5px 1.5px 0 ${ec}, 1.5px 1.5px 0 ${ec}, 0 2px 5px rgba(0,0,0,0.85)`;
+      } else if (currentSubStyle.edgeStyle === 'shadow') {
+        box.style.textShadow = `2px 2px 5px ${ec}, 0 0 8px ${ec}`;
+      } else {
+        box.style.textShadow = 'none';
+      }
+      box.style.marginBottom = `${Math.min(48, Math.max(2, Number(currentSubStyle.bottomPosition || 8)))}px`;
+    }
+
+    function syncSubtitleStyleUi(st) {
+      if (!st || typeof st !== 'object') return;
+      currentSubStyle = { ...currentSubStyle, ...st };
+      const sizeSl = document.getElementById('sub-size-slider');
+      const sizeVal = document.getElementById('sub-size-val');
+      const txtCol = document.getElementById('sub-text-color');
+      const bgOp = document.getElementById('sub-bg-opacity');
+      const bgOpVal = document.getElementById('sub-bg-opacity-val');
+      const bgCol = document.getElementById('sub-bg-color');
+      const edgeSel = document.getElementById('sub-edge-style');
+      const styleSel = document.getElementById('sub-text-style');
+      const fontSel = document.getElementById('sub-font-family');
+      const botSl = document.getElementById('sub-bottom-pos');
+      const botVal = document.getElementById('sub-bottom-val');
+      const offVal = document.getElementById('sub-offset-val');
+
+      const sz = Number(currentSubStyle.textSize || 1.5);
+      if (sizeSl) sizeSl.value = sz;
+      if (sizeVal) sizeVal.textContent = `${Math.round(sz * 100)}% (${sz.toFixed(2)}x)`;
+      if (txtCol && currentSubStyle.textColor) txtCol.value = currentSubStyle.textColor;
+      const op = currentSubStyle.backgroundOpacity !== undefined ? Number(currentSubStyle.backgroundOpacity) : 0.65;
+      if (bgOp) bgOp.value = op;
+      if (bgOpVal) bgOpVal.textContent = `${Math.round(op * 100)}%`;
+      if (bgCol && currentSubStyle.backgroundColor) bgCol.value = currentSubStyle.backgroundColor;
+      if (edgeSel && currentSubStyle.edgeStyle) edgeSel.value = currentSubStyle.edgeStyle;
+      if (styleSel && currentSubStyle.textStyle) styleSel.value = currentSubStyle.textStyle;
+      if (fontSel && currentSubStyle.textFont) fontSel.value = currentSubStyle.textFont;
+      const bp = Number(currentSubStyle.bottomPosition ?? 8);
+      if (botSl) botSl.value = bp;
+      if (botVal) botVal.textContent = `${bp}%`;
+      const off = Number(currentSubStyle.offsetSec || 0);
+      if (offVal) offVal.textContent = `${off >= 0 ? '+' : ''}${off.toFixed(1)}s`;
+
+      updateSubtitlePreviewBox();
+    }
+
+    async function onSubStyleInput(pushToServer = true) {
+      const sz = parseFloat(document.getElementById('sub-size-slider')?.value || '1.5');
+      const tc = document.getElementById('sub-text-color')?.value || '#FFFF00';
+      const op = parseFloat(document.getElementById('sub-bg-opacity')?.value || '0.65');
+      const bc = document.getElementById('sub-bg-color')?.value || '#000000';
+      const es = document.getElementById('sub-edge-style')?.value || 'outline';
+      const ts = document.getElementById('sub-text-style')?.value || 'bold';
+      const ff = document.getElementById('sub-font-family')?.value || 'sans-serif';
+      const bp = parseInt(document.getElementById('sub-bottom-pos')?.value || '8', 10);
+
+      currentSubStyle = {
+        ...currentSubStyle,
+        textSize: sz,
+        textColor: tc,
+        backgroundOpacity: op,
+        backgroundColor: bc,
+        edgeStyle: es,
+        textStyle: ts,
+        textFont: ff,
+        bottomPosition: bp,
+      };
+      syncSubtitleStyleUi(currentSubStyle);
+
+      if (pushToServer) {
+        await fetch('/api/subtitles/style', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(currentSubStyle),
+        });
+      }
+    }
+
+    function setSubSizePreset(sizeVal) {
+      const sl = document.getElementById('sub-size-slider');
+      if (sl) sl.value = sizeVal;
+      onSubStyleInput(true);
+    }
+
+    function setSubColor(hexColor) {
+      const col = document.getElementById('sub-text-color');
+      if (col) col.value = hexColor;
+      onSubStyleInput(true);
+    }
+
+    async function adjustSubOffset(deltaSec, resetZero = false) {
+      const newOffset = resetZero ? 0.0 : Number((Number(currentSubStyle.offsetSec || 0) + deltaSec).toFixed(2));
+      currentSubStyle.offsetSec = newOffset;
+      syncSubtitleStyleUi(currentSubStyle);
+      await fetch('/api/subtitles/style', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offsetSec: newOffset }),
+      });
+    }
+
+    async function resetSubtitleStyle() {
+      const res = await fetch('/api/subtitles/style', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reset: true }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        syncSubtitleStyleUi(data.style);
+      }
+    }
+
+    async function stopSubtitleOnTv() {
+      await fetch('/api/subtitles/stop', { method: 'POST' });
+    }
+
+    async function uploadLocalSubtitleFile(inputEl) {
+      const file = inputEl?.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const b64 = String(reader.result || '').split(',')[1] || '';
+        const res = await fetch('/api/subtitles/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            content_base64: b64,
+            auto_cast: true,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const subUrlInput = document.getElementById('sub-url');
+          if (subUrlInput && data.url) subUrlInput.value = data.url;
+        } else {
+          alert('Không thể tải lên file phụ đề này!');
+        }
+        inputEl.value = '';
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function syncBufferConfigUi(cfg) {
+      if (!cfg || typeof cfg !== 'object') return;
+      currentBufferConfig = { ...currentBufferConfig, ...cfg };
+      const modes = ['normal', 'weak_net', 'ultra'];
+      modes.forEach(m => {
+        const btn = document.getElementById(`buf-mode-${m}`);
+        if (!btn) return;
+        const active = (currentBufferConfig.mode || 'weak_net') === m;
+        btn.style.borderColor = active ? '#38bdf8' : 'rgba(148,163,184,0.25)';
+        btn.style.background = active ? 'rgba(56,189,248,0.18)' : 'rgba(30,41,59,0.75)';
+      });
+
+      const isDisk = (currentBufferConfig.storage_type || 'disk') === 'disk';
+      const btnDisk = document.getElementById('buf-storage-disk');
+      const btnRam = document.getElementById('buf-storage-ram');
+      const dirRow = document.getElementById('buf-disk-dir-row');
+      const dirInput = document.getElementById('buf-disk-dir-input');
+      const limitLabel = document.getElementById('buf-limit-label');
+      const statTitle = document.getElementById('stat-storage-title');
+
+      if (btnDisk) {
+        btnDisk.style.borderColor = isDisk ? '#10b981' : 'rgba(148,163,184,0.25)';
+        btnDisk.style.background = isDisk ? 'rgba(16,185,129,0.2)' : 'rgba(30,41,59,0.75)';
+        btnDisk.style.color = isDisk ? '#6ee7b7' : '#cbd5e1';
+      }
+      if (btnRam) {
+        btnRam.style.borderColor = !isDisk ? '#38bdf8' : 'rgba(148,163,184,0.25)';
+        btnRam.style.background = !isDisk ? 'rgba(56,189,248,0.2)' : 'rgba(30,41,59,0.75)';
+        btnRam.style.color = !isDisk ? '#38bdf8' : '#cbd5e1';
+      }
+      if (dirRow) dirRow.style.display = isDisk ? 'flex' : 'none';
+      if (dirInput && currentBufferConfig.disk_dir) dirInput.value = currentBufferConfig.disk_dir;
+      if (limitLabel) {
+        limitLabel.innerHTML = isDisk
+          ? '💿 <strong>Dung lượng bộ đệm Ổ Cứng tối đa (Tự xóa file cũ):</strong>'
+          : '⚡ <strong>Dung lượng bộ nhớ RAM đệm tối đa trên PC:</strong>';
+      }
+      if (statTitle) {
+        statTitle.textContent = isDisk ? 'ĐÃ LƯU TRÊN Ổ CỨNG' : 'ĐÃ LƯU TRONG RAM';
+      }
+
+      const pfSl = document.getElementById('buf-prefetch-slider');
+      const pfVal = document.getElementById('buf-prefetch-val');
+      const ramSl = document.getElementById('buf-ram-slider');
+      const ramVal = document.getElementById('buf-ram-val');
+      const segs = Number(currentBufferConfig.prefetch_segments ?? 10);
+      const ramMb = Number(currentBufferConfig.max_ram_mb ?? 800);
+      if (pfSl) pfSl.value = segs;
+      if (pfVal) pfVal.textContent = `${segs} phân đoạn (~${segs * 4} giây)`;
+      if (ramSl) ramSl.value = ramMb;
+      if (ramVal) ramVal.textContent = `${ramMb} MB`;
+    }
+
+    function updateBufferStatsUi(stats) {
+      if (!stats || typeof stats !== 'object') return;
+      const totalMb = Number((stats.hls_cache_mb || 0) + (stats.mp4_buffered_mb || 0)).toFixed(1);
+      const segs = Number(stats.hls_cached_segments || 0);
+      const hits = Number(stats.hls_cache_hits || 0);
+      const isDisk = (stats.storage_type || currentBufferConfig?.storage_type || 'disk') === 'disk';
+      const badge = document.getElementById('buffer-live-badge');
+      if (badge) {
+        badge.textContent = isDisk
+          ? `💿 Đệm Ổ Cứng: ${totalMb} MB (${segs} đoạn .TS | Hit: ${hits})`
+          : `⚡ RAM Buffer: ${totalMb} MB (${segs} đoạn .TS | Hit: ${hits})`;
+      }
+      const elRam = document.getElementById('stat-ram-mb');
+      const elSegs = document.getElementById('stat-segs');
+      const elHits = document.getElementById('stat-hits');
+      if (elRam) elRam.textContent = `${totalMb} MB`;
+      if (elSegs) elSegs.textContent = `${segs} đoạn`;
+      if (elHits) elHits.textContent = `${hits} lần`;
+    }
+
+    async function setBufferStorageType(storage_type) {
+      const res = await fetch('/api/buffer/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storage_type }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        syncBufferConfigUi(data.config);
+        updateBufferStatsUi(data.stats);
+      }
+    }
+
+    async function selectBufferMode(mode) {
+      const res = await fetch('/api/buffer/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        syncBufferConfigUi(data.config);
+        updateBufferStatsUi(data.stats);
+      }
+    }
+
+    async function saveCustomBufferConfig() {
+      const prefetch_segments = parseInt(document.getElementById('buf-prefetch-slider')?.value || '10', 10);
+      const max_ram_mb = parseInt(document.getElementById('buf-ram-slider')?.value || '800', 10);
+      const disk_dir = (document.getElementById('buf-disk-dir-input')?.value || '').trim();
+      const payload = { prefetch_segments, max_ram_mb };
+      if (disk_dir) payload.disk_dir = disk_dir;
+      const res = await fetch('/api/buffer/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        syncBufferConfigUi(data.config);
+        updateBufferStatsUi(data.stats);
+      }
+    }
+
+    async function clearServerRamBuffer() {
+      const res = await fetch('/api/buffer/clear', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        updateBufferStatsUi(data.stats);
+      }
     }
 
     async function scanDlna() {
@@ -1669,9 +2360,13 @@
       await fetch('/api/sniff-clear', { method: 'POST' });
       document.getElementById('sniffed-list').innerHTML = `
         <div style="color:var(--muted); font-size:0.88rem; text-align:center; padding:18px;">
-          Đã xóa sạch lịch sử. Mở tab phim để bắt luồng mới!
+          Đã xóa sạch danh sách luồng. Mở phim hoặc bấm Bóc Tách để bắt luồng mới!
         </div>
       `;
+      const subSec = document.getElementById('unified-subs-section');
+      const subList = document.getElementById('sniffed-subs-list');
+      if (subList) subList.innerHTML = '';
+      if (subSec) subSec.style.display = 'none';
     }
 
     function prependSniffedItem(st) {
@@ -1747,19 +2442,33 @@
           <div class="badge-row">${buildStreamBadgesHtml(st)}</div>
           <small title="${st.url}">${formatShortUrl(dispUrl)}</small>
         </div>
-        <div style="display:flex; gap:6px; flex-shrink:0;">
+        <div style="display:flex; gap:6px; flex-shrink:0; align-items:center;">
           <button class="btn-secondary btn-sniff-add" style="padding:7px 10px; font-size:0.78rem; color:#6ee7b7; border-color:rgba(16,185,129,0.4); white-space:nowrap;" title="Thêm vào danh sách phát">➕ DS</button>
           <button class="btn-cast btn-sniff-play" style="padding:8px 14px; font-size:0.82rem; white-space:nowrap;">▶️ Phát</button>
+          <button class="btn-secondary btn-sniff-del" style="padding:6px 9px; font-size:0.78rem; color:#fca5a5;" title="Xóa luồng này">✕</button>
         </div>
       `;
       div.querySelector('.btn-sniff-add').onclick = (e) => addItemsToPlaylist([st], false, e.currentTarget);
       div.querySelector('.btn-sniff-play').onclick = () => castDirect(st);
+      div.querySelector('.btn-sniff-del').onclick = async () => {
+        div.remove();
+        try {
+          await fetch('/api/sniff-remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: st.url }),
+          });
+        } catch (e) {}
+      };
       list.prepend(div);
     }
 
     function prependSniffedSubtitle(sub) {
       if (!sub || !sub.url) return;
+      const subSec = document.getElementById('unified-subs-section');
+      if (subSec) subSec.style.display = 'block';
       const list = document.getElementById('sniffed-subs-list');
+      if (!list) return;
       if (list.querySelector('div[style*="text-align:center"]')) {
         list.innerHTML = '';
       }
@@ -1806,6 +2515,9 @@
           info.auto_next_enabled,
           info.loop_mode,
           info.saved_playlists || [],
+          info.skip_intro_sec,
+          info.skip_outro_sec,
+          info.sponsorblock_enabled,
         );
         if (info.last_yt_results && info.last_yt_results.length > 0) {
           lastYtResults = info.last_yt_results;
@@ -1821,6 +2533,9 @@
           document.getElementById('np-time').textContent =
             `${formatTime(info.current_media.currentTime || 0)} / ${formatTime(currentDuration)}`;
         }
+        if (info.subtitle_style) syncSubtitleStyleUi(info.subtitle_style);
+        if (info.buffer_config) syncBufferConfigUi(info.buffer_config);
+        if (info.buffer_stats) updateBufferStatsUi(info.buffer_stats);
       } catch (e) {
         console.warn('Sync error:', e);
       } finally {
@@ -1876,10 +2591,31 @@
             renderYtResults(lastYtResults, msg.last_yt_query || '');
           }
           if (msg.episodes || msg.saved_playlists) {
-            renderEpisodes(msg.episodes || [], msg.current_episode_index, msg.auto_next_enabled, msg.loop_mode, msg.saved_playlists);
+            renderEpisodes(
+              msg.episodes || [],
+              msg.current_episode_index,
+              msg.auto_next_enabled,
+              msg.loop_mode,
+              msg.saved_playlists,
+              msg.skip_intro_sec,
+              msg.skip_outro_sec,
+              msg.sponsorblock_enabled,
+            );
           }
+          if (msg.subtitle_style) syncSubtitleStyleUi(msg.subtitle_style);
+          if (msg.buffer_config) syncBufferConfigUi(msg.buffer_config);
+          if (msg.buffer_stats) updateBufferStatsUi(msg.buffer_stats);
         } else if (msg.action === 'episodes_updated') {
-          renderEpisodes(msg.episodes || [], msg.current_episode_index, msg.auto_next_enabled, msg.loop_mode, msg.saved_playlists);
+          renderEpisodes(
+            msg.episodes || [],
+            msg.current_episode_index,
+            msg.auto_next_enabled,
+            msg.loop_mode,
+            msg.saved_playlists,
+            msg.skip_intro_sec,
+            msg.skip_outro_sec,
+            msg.sponsorblock_enabled,
+          );
         } else if (msg.action === 'yt_search_updated') {
           lastYtResults = msg.results || [];
           const qInput = document.getElementById('yt-query');
@@ -1895,12 +2631,21 @@
           if (currentDuration > 0) {
             document.getElementById('seek-slider').value = (st.currentTime / currentDuration) * 100;
           }
+          if (st.buffer_stats) updateBufferStatsUi(st.buffer_stats);
+        } else if (msg.action === 'subtitle_style') {
+          syncSubtitleStyleUi(msg.style);
+        } else if (msg.action === 'buffer_config') {
+          if (msg.config) syncBufferConfigUi(msg.config);
+          if (msg.stats) updateBufferStatsUi(msg.stats);
         } else if (msg.action === 'sniffed_stream') {
           prependSniffedItem(msg.stream);
         } else if (msg.action === 'sniffed_subtitle') {
           prependSniffedSubtitle(msg.subtitle);
         } else if (msg.action === 'sniff_cleared') {
           document.getElementById('sniffed-list').innerHTML = '';
+        } else if (msg.action === 'sniff_removed') {
+          const item = document.querySelector(`#sniffed-list .stream-item[data-url="${msg.url}"]`);
+          if (item) item.remove();
         } else if (msg.action === 'media_updated') {
           document.getElementById('np-title').textContent = msg.media.title;
         }

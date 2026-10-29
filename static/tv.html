@@ -38,7 +38,7 @@
 
     .tv-card {
       background: rgba(15, 23, 42, 0.78);
-      border: 1px solid rgba(148, 163, 184, 0.18);
+      border: 1px solid rgba(148, 163, 184, 0.15);
       border-radius: 28px;
       padding: 48px 64px;
       text-align: center;
@@ -144,11 +144,34 @@
       object-fit: contain;
       background: #000;
     }
-    video::cue {
-      background: rgba(0, 0, 0, 0.72);
-      color: #fff;
-      font-size: 1.5rem;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.9);
+
+    /* CUSTOM HIGH-PRECISION TV SUBTITLE OVERLAY */
+    #tv-subtitle-layer {
+      position: absolute;
+      left: 4%;
+      right: 4%;
+      bottom: 8%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      pointer-events: none;
+      z-index: 15;
+      text-align: center;
+      transition: bottom 0.15s ease;
+    }
+    #tv-subtitle-box {
+      display: none;
+      max-width: 92%;
+      padding: 0.18em 0.55em;
+      border-radius: 0.25em;
+      line-height: 1.38;
+      white-space: pre-line;
+      word-break: break-word;
+      font-size: 3.3vh;
+      font-weight: 700;
+      color: #FFFF00;
+      background: rgba(0, 0, 0, 0.65);
     }
 
     /* TV OSD OVERLAY */
@@ -178,12 +201,16 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 16px;
     }
     .osd-title {
       font-size: 1.8rem;
       font-weight: 700;
       color: #fff;
       text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .osd-badge {
       padding: 6px 14px;
@@ -191,6 +218,7 @@
       background: rgba(236, 72, 153, 0.85);
       font-weight: 700;
       font-size: 0.95rem;
+      white-space: nowrap;
     }
     .osd-bottom {
       display: flex;
@@ -198,18 +226,31 @@
       gap: 12px;
     }
     .progress-bar-bg {
+      position: relative;
       width: 100%;
       height: 10px;
-      background: rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.18);
       border-radius: 999px;
       overflow: hidden;
     }
+    .progress-bar-buffer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 0%;
+      background: rgba(56, 189, 248, 0.42);
+      border-radius: 999px;
+      transition: width 0.25s linear;
+    }
     .progress-bar-fill {
+      position: relative;
       height: 100%;
       width: 0%;
       background: linear-gradient(90deg, #ec4899, #3b82f6);
       border-radius: 999px;
       transition: width 0.2s linear;
+      z-index: 2;
     }
     .osd-time-row {
       display: flex;
@@ -245,7 +286,7 @@
         <span id="ws-status">ĐANG KẾT NỐI MÁY TÍNH...</span>
       </div>
       <h1>WebVideoCast Receiver</h1>
-      <p class="subtitle">Sẵn sàng nhận luồng video 4K / HLS (.m3u8) / MP4 trực tiếp từ trình duyệt máy tính</p>
+      <p class="subtitle">Sẵn sàng nhận luồng video 4K / HLS (.m3u8) / MP4 + Smart RAM Buffer & Phụ đề tùy biến</p>
       <div class="info-grid">
         <div class="info-box">
           <div class="info-label">Mã kết nối cast2tv.app</div>
@@ -262,6 +303,9 @@
 
   <div id="player-wrap">
     <video id="video" playsinline crossorigin="anonymous"></video>
+    <div id="tv-subtitle-layer">
+      <div id="tv-subtitle-box"></div>
+    </div>
   </div>
 
   <div id="osd">
@@ -271,10 +315,12 @@
     </div>
     <div class="osd-bottom">
       <div class="progress-bar-bg">
+        <div class="progress-bar-buffer" id="osd-buffer"></div>
         <div class="progress-bar-fill" id="osd-progress"></div>
       </div>
       <div class="osd-time-row">
         <span id="osd-time">00:00 / 00:00</span>
+        <span id="osd-buffer-txt" style="color:#38bdf8;font-size:1.05rem">Đệm: 0s</span>
         <span id="osd-vol">Âm lượng: 100%</span>
       </div>
     </div>
@@ -285,9 +331,38 @@
     const standby = document.getElementById('standby');
     const osd = document.getElementById('osd');
     const unlockBtn = document.getElementById('unlock-btn');
+    const subLayer = document.getElementById('tv-subtitle-layer');
+    const subBox = document.getElementById('tv-subtitle-box');
+
     let hls = null;
     let ws = null;
     let osdTimer = null;
+    let stallRecoveryTimer = null;
+
+    // Subtitle Engine State
+    let currentSubUrl = '';
+    let parsedCues = [];
+    let vttBakedOffsetSec = 0.0;
+    let subStyle = {
+      textSize: 1.5,
+      textColor: '#FFFF00',
+      backgroundColor: '#000000',
+      backgroundOpacity: 0.65,
+      edgeStyle: 'outline',
+      edgeColor: '#000000',
+      textFont: 'sans-serif',
+      textStyle: 'bold',
+      bottomPosition: 8,
+      offsetSec: 0.0,
+    };
+
+    // Smart Buffer Config State
+    let bufferConfig = {
+      mode: 'weak_net',
+      enabled: true,
+      hls_max_buffer_sec: 180,
+      prebuffer_before_play: true,
+    };
 
     function updateClock() {
       const now = new Date();
@@ -309,13 +384,13 @@
       return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     }
 
-    function showOsd(stateText) {
+    function showOsd(stateText, durationMs = 4000) {
       if (stateText) {
         document.getElementById('osd-state').textContent = stateText;
       }
       osd.classList.add('visible');
       clearTimeout(osdTimer);
-      osdTimer = setTimeout(() => osd.classList.remove('visible'), 4000);
+      osdTimer = setTimeout(() => osd.classList.remove('visible'), durationMs);
     }
 
     function unlockAudio() {
@@ -327,36 +402,175 @@
       }
     }
 
+    function hexToRgba(hex, alpha) {
+      let c = (hex || '#000000').replace('#', '').trim();
+      if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+      const num = parseInt(c, 16);
+      const r = (num >> 16) & 255;
+      const g = (num >> 8) & 255;
+      const b = num & 255;
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function applySubtitleStyle(newStyle) {
+      if (newStyle && typeof newStyle === 'object') {
+        subStyle = { ...subStyle, ...newStyle };
+      }
+      const scale = Number(subStyle.textSize) || 1.5;
+      subBox.style.fontSize = `${(scale * 2.25).toFixed(2)}vh`;
+      subBox.style.color = subStyle.textColor || '#FFFF00';
+      const bgAlpha = subStyle.backgroundOpacity !== undefined ? Number(subStyle.backgroundOpacity) : 0.65;
+      subBox.style.backgroundColor = hexToRgba(subStyle.backgroundColor || '#000000', bgAlpha);
+      subBox.style.fontFamily = subStyle.textFont || 'sans-serif';
+
+      const tStyle = subStyle.textStyle || 'bold';
+      subBox.style.fontWeight = (tStyle === 'bold' || tStyle === 'bold_italic') ? '700' : '400';
+      subBox.style.fontStyle = (tStyle === 'italic' || tStyle === 'bold_italic') ? 'italic' : 'normal';
+
+      const ec = subStyle.edgeColor || '#000000';
+      const edge = subStyle.edgeStyle || 'outline';
+      if (edge === 'outline') {
+        subBox.style.textShadow =
+          `-2px -2px 0 ${ec}, 2px -2px 0 ${ec}, -2px 2px 0 ${ec}, 2px 2px 0 ${ec}, ` +
+          `0 -2px 0 ${ec}, 0 2px 0 ${ec}, -2px 0 0 ${ec}, 2px 0 0 ${ec}, 0 3px 8px rgba(0,0,0,0.85)`;
+      } else if (edge === 'shadow') {
+        subBox.style.textShadow = `2px 3px 6px ${ec}, 0 0 12px ${ec}`;
+      } else {
+        subBox.style.textShadow = 'none';
+      }
+
+      const bottomPct = Math.max(2, Math.min(60, Number(subStyle.bottomPosition ?? 8)));
+      subLayer.style.bottom = `${bottomPct}%`;
+      renderActiveSubtitles();
+    }
+
+    function parseVttTime(ts) {
+      const clean = ts.trim().replace(',', '.');
+      const parts = clean.split(':');
+      if (parts.length === 3) {
+        return parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + parseFloat(parts[2]);
+      } else if (parts.length === 2) {
+        return parseInt(parts[0], 10) * 60 + parseFloat(parts[1]);
+      }
+      return 0;
+    }
+
+    function parseWebVttCues(vttText) {
+      const lines = (vttText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+      const cues = [];
+      let i = 0;
+      const tsRe = /^(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})/;
+      while (i < lines.length) {
+        const line = lines[i].trim();
+        const m = tsRe.exec(line);
+        if (m) {
+          const start = parseVttTime(m[1]);
+          const end = parseVttTime(m[2]);
+          i++;
+          const textLines = [];
+          while (i < lines.length && lines[i].trim() !== '') {
+            textLines.push(lines[i].trim());
+            i++;
+          }
+          const rawText = textLines.join('\n').replace(/<[^>]+>/g, '').trim();
+          if (rawText && end > start) {
+            cues.push({ start, end, text: rawText });
+          }
+        } else {
+          i++;
+        }
+      }
+      return cues;
+    }
+
+    async function loadSubtitleTrack(url) {
+      if (!url) {
+        currentSubUrl = '';
+        parsedCues = [];
+        subBox.style.display = 'none';
+        subBox.textContent = '';
+        return;
+      }
+      currentSubUrl = url;
+      try {
+        // Record the offsetSec that the backend baked into this VTT fetch
+        vttBakedOffsetSec = Number(subStyle.offsetSec || 0);
+        const resp = await fetch(url, { cache: 'no-store' });
+        if (!resp.ok) return;
+        const vttText = await resp.text();
+        parsedCues = parseWebVttCues(vttText);
+        applySubtitleStyle();
+      } catch (e) {
+        console.warn('Subtitle load error:', e);
+      }
+    }
+
+    function renderActiveSubtitles() {
+      if (!parsedCues.length || video.readyState < 1) {
+        subBox.style.display = 'none';
+        return;
+      }
+      const cur = video.currentTime || 0;
+      // Apply any live delta in offsetSec since the VTT was fetched
+      const deltaOffset = Number(subStyle.offsetSec || 0) - vttBakedOffsetSec;
+      const activeTexts = [];
+      for (let i = 0; i < parsedCues.length; i++) {
+        const c = parsedCues[i];
+        const st = c.start + deltaOffset;
+        const en = c.end + deltaOffset;
+        if (cur >= st && cur <= en) {
+          activeTexts.push(c.text);
+        }
+      }
+      if (activeTexts.length > 0) {
+        subBox.textContent = activeTexts.join('\n');
+        subBox.style.display = 'inline-block';
+      } else {
+        subBox.style.display = 'none';
+      }
+    }
+
+    setInterval(renderActiveSubtitles, 100);
+
+    function getForwardBufferSec() {
+      try {
+        const cur = video.currentTime || 0;
+        const buf = video.buffered;
+        for (let i = 0; i < buf.length; i++) {
+          if (buf.start(i) <= cur + 0.5 && buf.end(i) >= cur) {
+            return Math.max(0, buf.end(i) - cur);
+          }
+        }
+      } catch (e) {}
+      return 0;
+    }
+
     function loadMedia(media) {
+      clearTimeout(stallRecoveryTimer);
       if (!media || !media.url) {
         if (hls) { hls.destroy(); hls = null; }
         video.pause();
         video.removeAttribute('src');
+        loadSubtitleTrack('');
         standby.classList.remove('hidden');
         return;
       }
 
       standby.classList.add('hidden');
       document.getElementById('osd-title').textContent = media.title || 'Web Video Stream';
-      showOsd('ĐANG TẢI...');
+      showOsd('ĐANG TẢI & NẠP ĐỆM...');
 
       if (hls) {
         hls.destroy();
         hls = null;
       }
 
-      // Clear old subtitle tracks
+      // Remove native <track> elements so custom #tv-subtitle-layer never double-renders
       Array.from(video.querySelectorAll('track')).forEach(t => t.remove());
-      if (Array.isArray(media.subtitles)) {
-        media.subtitles.forEach((sub, idx) => {
-          const track = document.createElement('track');
-          track.kind = 'subtitles';
-          track.label = sub.label || `Phụ đề ${idx + 1}`;
-          track.srclang = 'vi';
-          track.src = sub.url;
-          if (idx === 0) track.default = true;
-          video.appendChild(track);
-        });
+      if (Array.isArray(media.subtitles) && media.subtitles.length > 0 && media.subtitles[0].url) {
+        loadSubtitleTrack(media.subtitles[0].url);
+      } else {
+        loadSubtitleTrack('');
       }
 
       const isHls = media.type === 'hls' || media.url.includes('.m3u8') || media.original_url?.includes('.m3u8');
@@ -365,28 +579,50 @@
         if (media.currentTime && media.currentTime > 1) {
           video.currentTime = media.currentTime;
         }
-        const playPromise = video.play();
-        if (playPromise !== undefined) {
-          playPromise.then(() => {
-            unlockBtn.classList.add('hidden');
-            showOsd('ĐANG PHÁT');
-          }).catch(err => {
-            // Smart TV browser blocked unmuted autoplay -> fallback to muted play first
-            console.warn('Unmuted autoplay blocked, retrying muted:', err);
-            video.muted = true;
-            video.play().then(() => {
-              showOsd('ĐANG PHÁT (BẤM OK ĐỂ BẬT TIẾNG)');
-            }).catch(() => {});
-          });
+        const doPlay = () => {
+          const playPromise = video.play();
+          if (playPromise !== undefined) {
+            playPromise.then(() => {
+              unlockBtn.classList.add('hidden');
+              showOsd('ĐANG PHÁT');
+            }).catch(err => {
+              console.warn('Unmuted autoplay blocked, retrying muted:', err);
+              video.muted = true;
+              video.play().then(() => {
+                showOsd('ĐANG PHÁT (BẤM OK ĐỂ BẬT TIẾNG)');
+              }).catch(() => {});
+            });
+          }
+        };
+        if (bufferConfig.prebuffer_before_play && bufferConfig.mode !== 'normal') {
+          showOsd('ĐANG ĐỆM TRƯỚC CHỐNG ĐỨNG HÌNH...');
+          setTimeout(doPlay, 650);
+        } else {
+          doPlay();
         }
       };
 
       if (isHls && window.Hls && Hls.isSupported()) {
+        const maxBufSec = Math.max(60, Number(bufferConfig.hls_max_buffer_sec || 180));
         hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
           backBufferLength: 90,
-          maxBufferLength: 60,
+          maxBufferLength: maxBufSec,
+          maxMaxBufferLength: Math.max(360, maxBufSec * 2),
+          maxBufferSize: 160 * 1000 * 1000,
+          maxBufferHole: 1.5,
+          highBufferWatchdogPeriod: 3,
+          nudgeOffset: 0.2,
+          nudgeMaxRetry: 10,
+          startFragPrefetch: true,
+          fragLoadingTimeOut: 25000,
+          fragLoadingMaxRetry: 10,
+          fragLoadingRetryDelay: 800,
+          manifestLoadingTimeOut: 20000,
+          manifestLoadingMaxRetry: 6,
+          levelLoadingTimeOut: 20000,
+          levelLoadingMaxRetry: 6,
         });
         hls.loadSource(media.url);
         hls.attachMedia(video);
@@ -397,13 +633,13 @@
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
+                showOsd('MẠNG YẾU — ĐANG TỰ ĐỘNG NỐI LẠI...');
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
                 hls.recoverMediaError();
                 break;
               default:
-                // Fallback to native video element
                 video.src = media.url;
                 startPlayback();
                 break;
@@ -411,10 +647,31 @@
           }
         });
       } else {
+        video.preload = 'auto';
         video.src = media.url;
         video.onloadedmetadata = () => startPlayback();
       }
     }
+
+    // Smart Anti-Stall Guard when network drops/jitters
+    video.addEventListener('waiting', () => {
+      if (video.paused || !bufferConfig.enabled || bufferConfig.mode === 'normal') return;
+      showOsd('ĐANG NẠP ĐỆM CHỐNG GIẬT...', 5000);
+      clearTimeout(stallRecoveryTimer);
+      const targetBufSec = bufferConfig.mode === 'ultra' ? 8.0 : 5.0;
+      let checks = 0;
+      const checkBufferReady = () => {
+        checks++;
+        const fwd = getForwardBufferSec();
+        if (fwd >= targetBufSec || checks >= 7) {
+          video.play().catch(() => {});
+          showOsd(`ĐÃ NẠP ĐỆM (+${Math.round(fwd)}s)`);
+        } else {
+          stallRecoveryTimer = setTimeout(checkBufferReady, 500);
+        }
+      };
+      stallRecoveryTimer = setTimeout(checkBufferReady, 500);
+    });
 
     function handleControl(cmd, val) {
       switch (cmd) {
@@ -464,17 +721,23 @@
         volume: video.volume,
         muted: video.muted,
         playbackRate: video.playbackRate,
+        forwardBufferSec: Math.round(getForwardBufferSec()),
       }));
     }
 
     video.addEventListener('timeupdate', () => {
       const cur = video.currentTime || 0;
       const dur = video.duration || 0;
+      const fwd = getForwardBufferSec();
       const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+      const bufPct = dur > 0 ? Math.min(100, ((cur + fwd) / dur) * 100) : 0;
       document.getElementById('osd-progress').style.width = `${pct}%`;
+      document.getElementById('osd-buffer').style.width = `${bufPct}%`;
       document.getElementById('osd-time').textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+      document.getElementById('osd-buffer-txt').textContent = `Đệm TV: +${Math.round(fwd)}s`;
       document.getElementById('osd-vol').textContent =
         video.muted ? 'Đang tắt tiếng (Bấm OK để bật)' : `Âm lượng: ${Math.round(video.volume * 100)}%`;
+      renderActiveSubtitles();
     });
 
     video.addEventListener('ended', () => {
@@ -536,13 +799,35 @@
               document.getElementById('tv-code').textContent = msg.server.code;
               document.getElementById('tv-ip').textContent = `${msg.server.ip}:${msg.server.port}`;
             }
+            if (msg.subtitle_style) applySubtitleStyle(msg.subtitle_style);
+            if (msg.buffer_config) bufferConfig = { ...bufferConfig, ...msg.buffer_config };
             if (msg.media && msg.media.url && msg.media.playing) {
               loadMedia(msg.media);
             }
           } else if (msg.action === 'load') {
+            if (msg.subtitle_style) applySubtitleStyle(msg.subtitle_style);
+            if (msg.buffer_config) bufferConfig = { ...bufferConfig, ...msg.buffer_config };
             loadMedia(msg.media);
           } else if (msg.action === 'control') {
             handleControl(msg.command, msg.value);
+          } else if (msg.action === 'subtitle') {
+            if (msg.style) applySubtitleStyle(msg.style);
+            if (msg.subtitle && msg.subtitle.url) {
+              loadSubtitleTrack(msg.subtitle.url);
+              showOsd(`PHỤ ĐỀ: ${msg.subtitle.label || 'Đã bật'}`);
+            }
+          } else if (msg.action === 'subtitle_stop') {
+            loadSubtitleTrack('');
+            showOsd('ĐÃ TẮT PHỤ ĐỀ');
+          } else if (msg.action === 'subtitle_style') {
+            applySubtitleStyle(msg.style);
+            showOsd(`CỠ CHỮ PHỤ ĐỀ: ${Math.round((msg.style?.textSize || 1.5) * 100)}%`, 2000);
+          } else if (msg.action === 'buffer_config') {
+            bufferConfig = { ...bufferConfig, ...(msg.config || {}) };
+            if (hls && bufferConfig.hls_max_buffer_sec) {
+              hls.config.maxBufferLength = Number(bufferConfig.hls_max_buffer_sec);
+            }
+            showOsd(`CHẾ ĐỘ ĐỆM: ${(bufferConfig.mode || 'weak_net').toUpperCase()}`, 2500);
           }
         } catch (err) {
           console.error(err);

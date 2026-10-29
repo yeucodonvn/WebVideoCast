@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .wvc_browser_profile/
+stream_cache/
 playlists.json
 wvc.apk
 *.zip
