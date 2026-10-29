@@ -2,7 +2,7 @@ import zipfile
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.resolve()
-OUTPUT_ZIP = BASE_DIR / "WebVideoCast_Studio_v3.0_Share.zip"
+OUTPUT_ZIP = BASE_DIR / "WebVideoCast_Studio_v3.1_Share.zip"
 
 FILES_TO_INCLUDE = [
     "server.py",
@@ -26,7 +26,7 @@ def build_share_zip(target_path: Path = OUTPUT_ZIP) -> Path:
         for rel_path in FILES_TO_INCLUDE:
             full_path = BASE_DIR / rel_path
             if full_path.exists():
-                arcname = f"WebVideoCast_Studio_v3.0/{rel_path}"
+                arcname = f"WebVideoCast_Studio_v3.1/{rel_path}"
                 zf.write(full_path, arcname=arcname)
     return target_path
 
